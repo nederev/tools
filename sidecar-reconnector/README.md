@@ -40,6 +40,12 @@ Launch `~/Applications/Sidecar Reconnector.app`. The app opens a compact
 native control panel, appears in the Dock while running, and also exposes a
 menu-bar item named `Sidecar`.
 
+The app title includes the bundle short version, for example:
+
+```text
+Sidecar Reconnector v0.1
+```
+
 The control panel includes:
 
 - current Sidecar target and connection status
@@ -73,6 +79,54 @@ menu-bar item. The app writes:
 ```
 
 Disable the checkbox to remove that LaunchAgent.
+
+## Version Bumps
+
+The app title reads from `CFBundleShortVersionString` in
+`app/Info.plist`. Bump it before a build when you need a visibly new app
+version:
+
+```sh
+make bump-version VERSION=0.2
+make clean all
+```
+
+That updates `CFBundleShortVersionString` and increments
+`CFBundleVersion`. To bump only the build number:
+
+```sh
+make bump-build
+make clean all
+```
+
+For an explicit version and build number:
+
+```sh
+make bump-version VERSION=0.2 BUILD=7
+```
+
+For a one-command versioned build:
+
+```sh
+make release-build VERSION=0.2
+```
+
+## Health Check
+
+After installing or debugging the app, run:
+
+```sh
+make app-health
+```
+
+The health check reports:
+
+- installed app path and version
+- app process state
+- LaunchAgent target
+- log freshness
+- hotkey registration evidence from the app log
+- configured target preference
 
 ## Hotkey
 

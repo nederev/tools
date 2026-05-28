@@ -104,6 +104,48 @@ The app watches:
 When one of those events fires, it schedules reconnect retries after 8,
 15, and 30 seconds.
 
+## App Version Looks Stale
+
+The panel title shows `CFBundleShortVersionString`, for example
+`Sidecar Reconnector v0.1`. If the title did not change after a rebuild,
+the installed app is probably still the old bundle.
+
+Bump and rebuild:
+
+```sh
+make bump-version VERSION=0.2
+make clean all
+```
+
+Then reinstall:
+
+```sh
+make install-app
+```
+
+Check the installed app:
+
+```sh
+make app-health
+```
+
+## Health Check Warnings
+
+Run:
+
+```sh
+make app-health
+```
+
+Warnings are informational unless they are printed as `fail:`. Common
+warnings:
+
+- `app process is not running`: launch the app.
+- `LaunchAgent missing`: enable `Launch at login` if automatic startup is
+  wanted.
+- `no hotkey registration line found in log`: launch the app and check
+  `~/Library/Logs/SidecarReconnector.log`.
+
 ## Build Fails
 
 Install Xcode Command Line Tools:

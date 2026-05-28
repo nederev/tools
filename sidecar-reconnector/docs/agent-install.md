@@ -51,6 +51,14 @@ sidecar-reconnector/build/sidecarctl
 sidecar-reconnector/build/Sidecar Reconnector.app
 ```
 
+When the app UI changed and the user needs to visually distinguish a new
+build, bump the visible app version before rebuilding:
+
+```sh
+make -C sidecar-reconnector bump-version VERSION=0.2
+make -C sidecar-reconnector clean all
+```
+
 ## Install Native App
 
 Run:
@@ -101,6 +109,13 @@ Validate launch-at-login state when enabled:
 
 ```sh
 test -f ~/Library/LaunchAgents/com.nederev.SidecarReconnector.plist
+```
+
+Run the bundled app health check for a single install/process/log/hotkey
+summary:
+
+```sh
+make -C sidecar-reconnector app-health
 ```
 
 ## Discover Devices

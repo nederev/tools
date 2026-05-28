@@ -18,8 +18,10 @@ APP_INFO := $(APP_CONTENTS)/Info.plist
 CORE_SRC := src/SidecarController.m
 CLI_SRC := src/sidecarctl.m
 APP_SRC := src/SidecarReconnectorApp.m
+VERSION ?=
+BUILD ?=
 
-.PHONY: all clean install install-app install-hammerspoon reload test
+.PHONY: all clean install install-app install-hammerspoon reload test bump-version bump-build release-build app-health
 
 all: $(BIN) $(APP_BUNDLE)
 
@@ -55,6 +57,25 @@ reload:
 
 test: all
 	$(BIN) list
+
+bump-version:
+	@if [ -z "$(VERSION)" ]; then \
+		echo 'usage: make bump-version VERSION=0.2 [BUILD=7]' >&2; \
+		exit 2; \
+	fi
+	@if [ -n "$(BUILD)" ]; then \
+		scripts/bump-version.sh --version "$(VERSION)" --build "$(BUILD)"; \
+	else \
+		scripts/bump-version.sh --version "$(VERSION)"; \
+	fi
+
+bump-build:
+	@scripts/bump-version.sh
+
+release-build: bump-version clean all
+
+app-health:
+	@scripts/app-health.sh
 
 clean:
 	rm -rf $(BUILD_DIR)
