@@ -6,3 +6,7 @@ Small utilities and experiments that are useful enough to keep.
 
 - [Sidecar Reconnector](sidecar-reconnector/README.md) -
   reconnects a Mac to an iPad Sidecar display after wake/unlock.
+
+## Agent Instructions
+
+Agents working in this repository should read [AGENTS.md](AGENTS.md).

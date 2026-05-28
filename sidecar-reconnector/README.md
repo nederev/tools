@@ -15,12 +15,39 @@ This is a private API utility. It can break after macOS updates.
 
 ## Install
 
-Install [Hammerspoon](https://www.hammerspoon.org/) first.
+Install [Hammerspoon](https://www.hammerspoon.org/) first if you
+want wake/unlock automation and hotkeys.
+
+With Homebrew:
+
+```sh
+brew install --cask hammerspoon
+open -a Hammerspoon
+```
+
+Clone the repo:
+
+```sh
+git clone https://github.com/nederev/tools.git
+cd tools/sidecar-reconnector
+```
+
+Make sure Xcode Command Line Tools are installed:
+
+```sh
+xcrun --find clang
+```
+
+If that fails:
+
+```sh
+xcode-select --install
+```
 
 Then build and install:
 
 ```sh
-cd sidecar-reconnector
+make clean all
 make install
 ```
 
@@ -40,6 +67,19 @@ Reload Hammerspoon:
 ```sh
 make reload
 ```
+
+## CLI-Only Use
+
+Hammerspoon is optional. The core helper can be used directly:
+
+```sh
+make clean all
+build/sidecarctl list
+build/sidecarctl connect --name "Your iPad name"
+```
+
+Without Hammerspoon you do not get wake/unlock automation or the
+global hotkey.
 
 ## Find Your iPad
 
@@ -115,3 +155,8 @@ Then remove the `require("sidecar-reconnector")` block from
 ## Troubleshooting
 
 See [docs/troubleshooting.md](docs/troubleshooting.md).
+
+## Agent Runbook
+
+Agents should follow [docs/agent-install.md](docs/agent-install.md)
+for a from-scratch install, validation, and debugging flow.
