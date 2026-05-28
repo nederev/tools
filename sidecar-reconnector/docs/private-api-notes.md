@@ -13,6 +13,11 @@ The helper checks `SidecarDisplayManager.connectedDevices` first.
 If the target is already connected, it exits successfully without
 changing anything.
 
+The native app wraps the same controller logic. App-level wake/session
+monitoring, the global reconnect hotkey, launch-at-login checkbox, and
+compact control panel are normal macOS APIs; the private API boundary is
+the Sidecar discovery/status/connect behavior.
+
 For discovery, it combines:
 
 - `SidecarDisplayManager.devices`

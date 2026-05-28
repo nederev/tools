@@ -19,12 +19,21 @@ Important boundaries:
 For a user machine install, the expected flow is:
 
 ```sh
-cd sidecar-reconnector
-make clean all
-make install
+make -C sidecar-reconnector clean all
+make -C sidecar-reconnector install-app
 ```
 
-Then configure `~/.hammerspoon/init.lua` with:
+Launch `~/Applications/Sidecar Reconnector.app`, choose the Sidecar
+target in the compact panel, and enable `Launch at login` when the app
+should start automatically after login. Hammerspoon is now legacy-only.
+
+For the legacy Hammerspoon watcher, install the helper/module:
+
+```sh
+make -C sidecar-reconnector install
+```
+
+Then configure `~/.hammerspoon/init.lua`:
 
 ```lua
 local sidecar = require("sidecar-reconnector")
@@ -44,6 +53,7 @@ make reload
 Validate:
 
 ```sh
-~/.hammerspoon/bin/sidecarctl list
-~/.hammerspoon/bin/sidecarctl status --name "User iPad name"
+sidecar-reconnector/build/sidecarctl list
+sidecar-reconnector/build/sidecarctl status --name "User iPad name"
+tail -f ~/Library/Logs/SidecarReconnector.log
 ```

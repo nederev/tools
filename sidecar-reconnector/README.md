@@ -36,17 +36,22 @@ Install the app into `~/Applications`:
 make install-app
 ```
 
-Launch `~/Applications/Sidecar Reconnector.app`. The app runs as a
-menu-bar item named `Sidecar` and has no Dock icon.
+Launch `~/Applications/Sidecar Reconnector.app`. The app opens a compact
+native control panel, appears in the Dock while running, and also exposes a
+menu-bar item named `Sidecar`.
 
-The menu includes:
+The control panel includes:
 
-- current Sidecar status
-- reconnect now
-- target iPad selection from discovered Sidecar devices
-- launch at login toggle
-- open log
-- quit
+- current Sidecar target and connection status
+- compact reconnect button
+- target iPad selector from discovered Sidecar devices
+- refresh targets button
+- configurable global reconnect hotkey
+- `Launch at login` checkbox
+- open log and quit buttons
+
+The menu bar item includes the same core actions: status, reconnect now,
+target selection, launch-at-login toggle, open log, and quit.
 
 On first launch, if exactly one display-capable Sidecar device is
 discoverable, the app selects it automatically. If multiple devices are
@@ -58,13 +63,36 @@ Logs are written to:
 ~/Library/Logs/SidecarReconnector.log
 ```
 
+## Launch At Login
+
+Enable `Launch at login` in the control panel or from the `Sidecar`
+menu-bar item. The app writes:
+
+```text
+~/Library/LaunchAgents/com.nederev.SidecarReconnector.plist
+```
+
+Disable the checkbox to remove that LaunchAgent.
+
+## Hotkey
+
+The standalone app registers a global reconnect hotkey. The default is:
+
+```text
+ctrl + alt + cmd + u
+```
+
+Use the hotkey edit button in the control panel to record a different
+shortcut. The hotkey raises the panel and runs reconnect quietly without
+showing an alert when Sidecar is already connected.
+
 ## Hammerspoon Install
 
 Hammerspoon is no longer required for the default app flow. Use this
 section only if you want the legacy Hammerspoon watcher.
 
-Install [Hammerspoon](https://www.hammerspoon.org/) first if you
-want wake/unlock automation and hotkeys.
+Install [Hammerspoon](https://www.hammerspoon.org/) first if you want
+the legacy watcher instead of the native app.
 
 With Homebrew:
 
@@ -134,7 +162,7 @@ automation.
 Run:
 
 ```sh
-~/.hammerspoon/bin/sidecarctl list
+build/sidecarctl list
 ```
 
 Example output:
@@ -144,14 +172,15 @@ candidate name=My iPad identifier=... model=iPad16,10 desc=IDS ...
 ```
 
 Use either `targetName` or `targetIdentifier` in the Hammerspoon
-config. Name is easier; identifier is more stable.
+config, or choose the target in the native app. Name is easier;
+identifier is more stable.
 
 ## Manual Test
 
 Disconnect Sidecar, then run:
 
 ```sh
-~/.hammerspoon/bin/sidecarctl connect --name "Your iPad name"
+build/sidecarctl connect --name "Your iPad name"
 ```
 
 Expected success:
@@ -176,7 +205,9 @@ The app:
 - reconnects after wake/unlock or display changes when disconnected
 - retries after 8, 15, and 30 seconds because iPads can be slow to wake
 - logs to `~/Library/Logs/SidecarReconnector.log`
-- can install or remove its own launch-at-login entry
+- can install or remove its own launch-at-login entry from the control
+  panel checkbox or menu item
+- registers a configurable global reconnect hotkey
 
 ## Hammerspoon Behavior
 
@@ -201,7 +232,15 @@ the AirPlay menu or Control Center UI.
 
 ## Uninstall
 
-Remove these files:
+For the native app, quit Sidecar Reconnector and remove:
+
+```sh
+rm -rf ~/Applications/Sidecar\ Reconnector.app
+rm -f ~/Library/LaunchAgents/com.nederev.SidecarReconnector.plist
+rm -f ~/Library/Logs/SidecarReconnector.log
+```
+
+For the legacy Hammerspoon install, remove these files:
 
 ```sh
 rm ~/.hammerspoon/bin/sidecarctl

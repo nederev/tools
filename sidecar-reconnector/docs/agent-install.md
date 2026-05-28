@@ -15,9 +15,9 @@ opening Control Center.
 - iPad signed into the same Apple ID
 - Wi-Fi and Bluetooth enabled
 - Xcode Command Line Tools
-- Hammerspoon, for wake/unlock automation and hotkeys
+- Hammerspoon only for the legacy optional watcher
 
-Install Hammerspoon if it is missing:
+Install Hammerspoon only if the user wants the legacy watcher:
 
 ```sh
 brew install --cask hammerspoon
@@ -66,13 +66,41 @@ This installs:
 ```
 
 Launch the app and use the `Sidecar` menu-bar item to choose the target
-iPad. Use Launch at Login from the app menu if the app should start
-automatically after login.
+iPad, or choose the target in the compact app panel. Use the `Launch at
+login` checkbox in the panel when the app should start automatically
+after login.
+
+The compact panel should show:
+
+- selected Sidecar device and connection status
+- reconnect icon button
+- target selector and refresh icon button
+- reconnect hotkey field and edit icon button
+- `Launch at login` checkbox
+- open log and quit buttons
+
+Default standalone hotkey:
+
+```text
+ctrl + alt + cmd + u
+```
 
 Validate the app log:
 
 ```sh
 tail -f ~/Library/Logs/SidecarReconnector.log
+```
+
+Validate the app process:
+
+```sh
+pgrep -fl SidecarReconnector
+```
+
+Validate launch-at-login state when enabled:
+
+```sh
+test -f ~/Library/LaunchAgents/com.nederev.SidecarReconnector.plist
 ```
 
 ## Discover Devices
@@ -188,10 +216,12 @@ Default hotkeys:
 2. Sleep the Mac.
 3. Wake and unlock the Mac.
 4. Wait for the configured retry delays.
-5. Check `~/.hammerspoon/sidecar-reconnector.log`.
+5. Check `~/Library/Logs/SidecarReconnector.log` for the native app, or
+   `~/.hammerspoon/sidecar-reconnector.log` for the legacy watcher.
 
-The watcher should run `sidecarctl connect` without opening Control
-Center.
+The native app or legacy watcher should run reconnect without opening
+Control Center. The native app schedules retries after wake/session/display
+events at 8, 15, and 30 seconds.
 
 ## Common Failures
 
@@ -201,6 +231,13 @@ Wake/unlock the iPad and retry.
 `displayAgentConnectToDevice:withConfig:completion:` selector errors
 usually mean the local XPC protocol declaration is incomplete.
 Check `src/sidecarctl.m` before changing method declarations.
+
+If the native app is running but does nothing, verify the target is
+selected in the panel and inspect:
+
+```sh
+tail -f ~/Library/Logs/SidecarReconnector.log
+```
 
 If `sidecarctl list` works but Hammerspoon does nothing, verify:
 

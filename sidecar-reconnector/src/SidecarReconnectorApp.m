@@ -30,6 +30,7 @@ static AppDelegate *GlobalAppDelegate = nil;
 @property(nonatomic, strong) NSTextField *hotKeyLabel;
 @property(nonatomic, strong) NSPopUpButton *targetPopup;
 @property(nonatomic, strong) NSButton *recordHotKeyButton;
+@property(nonatomic, strong) NSButton *launchAtLoginCheckbox;
 @property(nonatomic, strong) SidecarController *controller;
 @property(nonatomic, strong) NSMutableArray<NSTimer *> *retryTimers;
 @property(nonatomic, strong) id localKeyMonitor;
@@ -148,6 +149,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [self updateStatusMenuAsync];
   self.launchAtLoginItem.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
   self.mainLaunchAtLoginItem.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
 - (NSString *)expandedLogPath {
@@ -370,9 +372,12 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   button.layer.cornerRadius = 10.0;
   button.layer.backgroundColor = fillColor.CGColor;
   button.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightSemibold];
+  NSMutableParagraphStyle *style = [NSMutableParagraphStyle new];
+  style.alignment = NSTextAlignmentCenter;
   button.attributedTitle = [[NSAttributedString alloc] initWithString:title attributes:@{
     NSForegroundColorAttributeName: textColor,
     NSFontAttributeName: button.font,
+    NSParagraphStyleAttributeName: style,
   }];
   return button;
 }
@@ -386,6 +391,21 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   return surface;
 }
 
+- (NSView *)borderedSurfaceWithFrame:(NSRect)frame
+                                color:(NSColor *)color
+                               radius:(CGFloat)radius
+                          borderColor:(NSColor *)borderColor
+                          borderWidth:(CGFloat)borderWidth {
+  NSView *surface = [self roundedSurfaceWithFrame:frame color:color radius:radius];
+  surface.layer.borderColor = borderColor.CGColor;
+  surface.layer.borderWidth = borderWidth;
+  return surface;
+}
+
+- (NSView *)separatorWithFrame:(NSRect)frame {
+  return [self roundedSurfaceWithFrame:frame color:[NSColor colorWithWhite:1.0 alpha:0.12] radius:0.0];
+}
+
 - (void)updatePanelStatusAppearance:(NSString *)status {
   if (!self.panelStatusLabel) return;
 
@@ -395,19 +415,19 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 
   NSString *label = @"Needs attention";
   NSColor *background = [NSColor colorWithRed:0.36 green:0.27 blue:0.11 alpha:1.0];
-  NSColor *foreground = [NSColor colorWithRed:1.00 green:0.83 blue:0.45 alpha:1.0];
+  NSColor *foreground = [NSColor colorWithWhite:0.78 alpha:1.0];
   if (connected) {
     label = @"Connected";
-    background = [NSColor colorWithRed:0.08 green:0.28 blue:0.19 alpha:1.0];
-    foreground = [NSColor colorWithRed:0.70 green:0.94 blue:0.78 alpha:1.0];
+    background = [NSColor colorWithRed:0.28 green:0.78 blue:0.36 alpha:1.0];
+    foreground = [NSColor colorWithWhite:0.82 alpha:1.0];
   } else if (disconnected) {
     label = @"Disconnected";
-    background = [NSColor colorWithRed:0.38 green:0.13 blue:0.14 alpha:1.0];
-    foreground = [NSColor colorWithRed:1.00 green:0.68 blue:0.68 alpha:1.0];
+    background = [NSColor colorWithRed:0.90 green:0.28 blue:0.28 alpha:1.0];
+    foreground = [NSColor colorWithWhite:0.82 alpha:1.0];
   } else if (checking) {
     label = @"Checking";
-    background = [NSColor colorWithRed:0.18 green:0.25 blue:0.36 alpha:1.0];
-    foreground = [NSColor colorWithRed:0.68 green:0.82 blue:1.00 alpha:1.0];
+    background = [NSColor colorWithRed:0.36 green:0.54 blue:0.88 alpha:1.0];
+    foreground = [NSColor colorWithWhite:0.82 alpha:1.0];
   }
 
   self.panelStatusLabel.stringValue = label;
@@ -418,7 +438,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 - (void)showControlPanel:(id)sender {
   (void)sender;
   if (!self.controlPanel) {
-    NSRect frame = NSMakeRect(0, 0, 520, 380);
+    NSRect frame = NSMakeRect(0, 0, 520, 260);
     self.controlPanel = [[NSPanel alloc] initWithContentRect:frame
                                                    styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                                                      backing:NSBackingStoreBuffered
@@ -431,102 +451,132 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 
     NSView *content = self.controlPanel.contentView;
     content.wantsLayer = YES;
-    content.layer.backgroundColor = [NSColor colorWithRed:0.07 green:0.08 blue:0.09 alpha:1.0].CGColor;
+    content.layer.backgroundColor = [NSColor colorWithRed:0.08 green:0.09 blue:0.10 alpha:1.0].CGColor;
 
-    CGFloat left = 32.0;
-    CGFloat rightButtonX = 392.0;
-    CGFloat mainWidth = 344.0;
-    CGFloat sideWidth = 96.0;
+    CGFloat left = 24.0;
+    CGFloat labelWidth = 116.0;
+    CGFloat controlX = 140.0;
+    CGFloat controlWidth = 292.0;
+    CGFloat iconButtonX = 448.0;
+    CGFloat iconButtonSize = 32.0;
 
-    NSView *connectionCard = [self roundedSurfaceWithFrame:NSMakeRect(left, 246, 456, 84)
-                                                     color:[NSColor colorWithRed:0.11 green:0.12 blue:0.13 alpha:1.0]
-                                                    radius:14.0];
-    [content addSubview:connectionCard];
+    NSView *icon = [self roundedSurfaceWithFrame:NSMakeRect(left, 177, 38, 38)
+                                           color:[NSColor colorWithRed:0.12 green:0.23 blue:0.48 alpha:1.0]
+                                          radius:9.0];
+    [content addSubview:icon];
+    NSColor *iconStroke = [NSColor colorWithRed:0.72 green:0.82 blue:1.0 alpha:0.70];
+    [icon addSubview:[self borderedSurfaceWithFrame:NSMakeRect(10, 10, 17, 21)
+                                              color:[NSColor clearColor]
+                                             radius:3.5
+                                        borderColor:iconStroke
+                                        borderWidth:1.4]];
+    [icon addSubview:[self borderedSurfaceWithFrame:NSMakeRect(20, 9, 17, 17)
+                                              color:[NSColor colorWithRed:0.12 green:0.23 blue:0.48 alpha:1.0]
+                                             radius:3.5
+                                        borderColor:iconStroke
+                                        borderWidth:1.4]];
 
-    NSTextField *connectionLabel = [self labelWithFrame:NSMakeRect(48, 300, 120, 18)
-                                                  text:@"Connection"
-                                                  font:[NSFont systemFontOfSize:11.0 weight:NSFontWeightMedium]
-                                                 color:[NSColor colorWithWhite:0.62 alpha:1.0]];
-    [content addSubview:connectionLabel];
-
-    self.panelStatusPill = [self roundedSurfaceWithFrame:NSMakeRect(382, 294, 82, 22)
-                                                   color:[NSColor colorWithRed:0.18 green:0.25 blue:0.36 alpha:1.0]
-                                                  radius:11.0];
-    [content addSubview:self.panelStatusPill];
-
-    self.panelStatusLabel = [self labelWithFrame:NSMakeRect(382, 298, 82, 14)
-                                            text:@"Checking"
-                                            font:[NSFont systemFontOfSize:11.0 weight:NSFontWeightSemibold]
-                                           color:[NSColor colorWithRed:0.68 green:0.82 blue:1.00 alpha:1.0]];
-    self.panelStatusLabel.alignment = NSTextAlignmentCenter;
-    [content addSubview:self.panelStatusLabel];
-
-    self.panelSelectedLabel = [self labelWithFrame:NSMakeRect(48, 265, 292, 24)
+    self.panelSelectedLabel = [self labelWithFrame:NSMakeRect(78, 195, 330, 22)
                                              text:@"Selected: none"
-                                             font:[NSFont systemFontOfSize:14.0 weight:NSFontWeightSemibold]
-                                            color:[NSColor colorWithWhite:0.92 alpha:1.0]];
+                                             font:[NSFont systemFontOfSize:15.0 weight:NSFontWeightBold]
+                                            color:[NSColor colorWithWhite:0.94 alpha:1.0]];
     [content addSubview:self.panelSelectedLabel];
 
-    NSTextField *targetLabel = [self labelWithFrame:NSMakeRect(left, 210, 120, 18)
-                                              text:@"Target"
-                                              font:[NSFont systemFontOfSize:11.0 weight:NSFontWeightMedium]
-                                             color:[NSColor colorWithWhite:0.62 alpha:1.0]];
-    [content addSubview:targetLabel];
+    self.panelStatusPill = [self roundedSurfaceWithFrame:NSMakeRect(80, 181, 8, 8)
+                                                   color:[NSColor colorWithRed:0.36 green:0.54 blue:0.88 alpha:1.0]
+                                                  radius:4.0];
+    [content addSubview:self.panelStatusPill];
 
-    self.targetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(left, 172, mainWidth, 36) pullsDown:NO];
-    self.targetPopup.target = self;
-    self.targetPopup.action = @selector(choosePanelTarget:);
-    self.targetPopup.controlSize = NSControlSizeLarge;
-    self.targetPopup.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightMedium];
-    [content addSubview:self.targetPopup];
+    self.panelStatusLabel = [self labelWithFrame:NSMakeRect(96, 174, 150, 20)
+                                            text:@"Checking"
+                                            font:[NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
+                                           color:[NSColor colorWithWhite:0.82 alpha:1.0]];
+    [content addSubview:self.panelStatusLabel];
 
-    NSButton *targets = [self buttonWithTitle:@"Refresh"
-                                        frame:NSMakeRect(rightButtonX, 172, sideWidth, 36)
-                                       action:@selector(refreshTargetsMenu:)
-                                    fillColor:[NSColor colorWithWhite:0.20 alpha:1.0]
-                                    textColor:[NSColor colorWithWhite:0.92 alpha:1.0]];
-    [content addSubview:targets];
-
-    NSTextField *hotKeyTitle = [self labelWithFrame:NSMakeRect(left, 128, 160, 18)
-                                               text:@"Reconnect hotkey"
-                                               font:[NSFont systemFontOfSize:11.0 weight:NSFontWeightMedium]
-                                              color:[NSColor colorWithWhite:0.62 alpha:1.0]];
-    [content addSubview:hotKeyTitle];
-
-    NSView *hotKeySurface = [self roundedSurfaceWithFrame:NSMakeRect(left, 90, mainWidth, 36)
-                                                    color:[NSColor colorWithWhite:0.14 alpha:1.0]
-                                                   radius:10.0];
-    [content addSubview:hotKeySurface];
-
-    self.hotKeyLabel = [self labelWithFrame:NSMakeRect(left + 14, 99, mainWidth - 28, 18)
-                                       text:[self hotKeyDisplayString]
-                                       font:[NSFont systemFontOfSize:13.0 weight:NSFontWeightMedium]
-                                      color:[NSColor colorWithWhite:0.88 alpha:1.0]];
-    [content addSubview:self.hotKeyLabel];
-
-    self.recordHotKeyButton = [self buttonWithTitle:@"Change"
-                                              frame:NSMakeRect(rightButtonX, 90, sideWidth, 36)
-                                             action:@selector(startRecordingHotKey:)
-                                          fillColor:[NSColor colorWithWhite:0.20 alpha:1.0]
-                                          textColor:[NSColor colorWithWhite:0.92 alpha:1.0]];
-    [content addSubview:self.recordHotKeyButton];
-
-    NSButton *reconnect = [self buttonWithTitle:@"Reconnect Now"
-                                          frame:NSMakeRect(left, 30, 212, 40)
+    NSButton *reconnect = [self buttonWithTitle:@"↻"
+                                          frame:NSMakeRect(iconButtonX, 181, iconButtonSize, iconButtonSize)
                                          action:@selector(reconnectNow:)
                                       fillColor:[NSColor colorWithRed:0.08 green:0.38 blue:0.72 alpha:1.0]
                                       textColor:[NSColor whiteColor]];
+    reconnect.font = [NSFont systemFontOfSize:16.0 weight:NSFontWeightSemibold];
+    reconnect.toolTip = @"Reconnect Now";
     [content addSubview:reconnect];
 
+    [content addSubview:[self separatorWithFrame:NSMakeRect(left, 158, 456, 1)]];
+
+    NSTextField *targetLabel = [self labelWithFrame:NSMakeRect(left, 126, labelWidth, 20)
+                                              text:@"Target"
+                                              font:[NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
+                                             color:[NSColor colorWithWhite:0.78 alpha:1.0]];
+    [content addSubview:targetLabel];
+
+    self.targetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(controlX, 116, controlWidth, 28) pullsDown:NO];
+    self.targetPopup.target = self;
+    self.targetPopup.action = @selector(choosePanelTarget:);
+    self.targetPopup.controlSize = NSControlSizeRegular;
+    self.targetPopup.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium];
+    [content addSubview:self.targetPopup];
+
+    NSButton *targets = [self buttonWithTitle:@"↻"
+                                        frame:NSMakeRect(iconButtonX, 116, iconButtonSize, 28)
+                                       action:@selector(refreshTargetsMenu:)
+                                    fillColor:[NSColor colorWithWhite:0.19 alpha:1.0]
+                                    textColor:[NSColor colorWithWhite:0.92 alpha:1.0]];
+    targets.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightSemibold];
+    targets.toolTip = @"Refresh Targets";
+    [content addSubview:targets];
+
+    [content addSubview:[self separatorWithFrame:NSMakeRect(left, 92, 456, 1)]];
+
+    NSTextField *hotKeyTitle = [self labelWithFrame:NSMakeRect(left, 62, labelWidth, 20)
+                                               text:@"Hotkey"
+                                               font:[NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
+                                              color:[NSColor colorWithWhite:0.78 alpha:1.0]];
+    [content addSubview:hotKeyTitle];
+
+    NSView *hotKeySurface = [self borderedSurfaceWithFrame:NSMakeRect(controlX, 52, controlWidth, 28)
+                                                     color:[NSColor colorWithWhite:0.14 alpha:1.0]
+                                                    radius:7.0
+                                               borderColor:[NSColor colorWithWhite:1.0 alpha:0.08]
+                                               borderWidth:1.0];
+    [content addSubview:hotKeySurface];
+
+    self.hotKeyLabel = [self labelWithFrame:NSMakeRect(controlX + 11, 59, controlWidth - 22, 17)
+                                       text:[self hotKeyDisplayString]
+                                       font:[NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
+                                      color:[NSColor colorWithWhite:0.88 alpha:1.0]];
+    [content addSubview:self.hotKeyLabel];
+
+    self.recordHotKeyButton = [self buttonWithTitle:@"✎"
+                                              frame:NSMakeRect(iconButtonX, 52, iconButtonSize, 28)
+                                             action:@selector(startRecordingHotKey:)
+                                          fillColor:[NSColor colorWithWhite:0.19 alpha:1.0]
+                                          textColor:[NSColor colorWithWhite:0.92 alpha:1.0]];
+    self.recordHotKeyButton.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightSemibold];
+    self.recordHotKeyButton.toolTip = @"Change Hotkey";
+    [content addSubview:self.recordHotKeyButton];
+
+    [content addSubview:[self separatorWithFrame:NSMakeRect(0, 38, 520, 1)]];
+
+    self.launchAtLoginCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(24, 8, 170, 24)];
+    self.launchAtLoginCheckbox.buttonType = NSButtonTypeSwitch;
+    self.launchAtLoginCheckbox.title = @"Launch at login";
+    self.launchAtLoginCheckbox.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium];
+    self.launchAtLoginCheckbox.target = self;
+    self.launchAtLoginCheckbox.action = @selector(toggleLaunchAtLogin:);
+    self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
+    self.launchAtLoginCheckbox.toolTip = @"Start Sidecar Reconnector when you log in";
+    [content addSubview:self.launchAtLoginCheckbox];
+
     NSButton *logButton = [self buttonWithTitle:@"Open Log"
-                                          frame:NSMakeRect(260, 30, 100, 40)
+                                          frame:NSMakeRect(318, 8, 78, 24)
                                          action:@selector(openLog:)
                                       fillColor:[NSColor colorWithWhite:0.18 alpha:1.0]
                                       textColor:[NSColor colorWithWhite:0.90 alpha:1.0]];
     [content addSubview:logButton];
 
     NSButton *quitButton = [self buttonWithTitle:@"Quit"
-                                           frame:NSMakeRect(rightButtonX, 30, sideWidth, 40)
+                                           frame:NSMakeRect(404, 8, 76, 24)
                                           action:@selector(quit:)
                                        fillColor:[NSColor colorWithWhite:0.18 alpha:1.0]
                                        textColor:[NSColor colorWithWhite:0.72 alpha:1.0]];
@@ -543,6 +593,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [NSApp activateIgnoringOtherApps:YES];
   [self updateSelectedTargetLabel];
   [self refreshTargetsAllowAutoSelect:NO];
+  self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
   [self log:@"control panel shown"];
 }
 
@@ -836,6 +887,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   }
   self.launchAtLoginItem.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
   self.mainLaunchAtLoginItem.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
 - (void)writeLaunchAgent:(NSError **)error {

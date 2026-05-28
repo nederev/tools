@@ -15,13 +15,13 @@ Check:
 Then try:
 
 ```sh
-~/.hammerspoon/bin/sidecarctl list
+build/sidecarctl list
 ```
 
 If the iPad appears in `list`, retry:
 
 ```sh
-~/.hammerspoon/bin/sidecarctl connect --name "Your iPad name"
+build/sidecarctl connect --name "Your iPad name"
 ```
 
 ## iPad Is Locked
@@ -50,9 +50,10 @@ Check the log:
 tail -f ~/.hammerspoon/sidecar-reconnector.log
 ```
 
-## Menu-Bar App Does Nothing
+## Native App Does Nothing
 
-Confirm the app is running by looking for the `Sidecar` menu-bar item.
+Confirm the app is running by looking for the compact `Sidecar
+Reconnector` window, the Dock icon, or the `Sidecar` menu-bar item.
 
 Open the app log from the menu or run:
 
@@ -61,17 +62,47 @@ tail -f ~/Library/Logs/SidecarReconnector.log
 ```
 
 If the status says `Target not configured`, open the Target submenu and
-choose the iPad. The app will not reconnect without an explicit target
-unless exactly one display-capable Sidecar device was discovered on
-first launch.
+choose the iPad, or choose the target from the app panel. The app will
+not reconnect without an explicit target unless exactly one
+display-capable Sidecar device was discovered on first launch.
 
-If Launch at Login is enabled but the app does not start after login,
-toggle Launch at Login off and on from the menu. The app stores its
-login item in:
+If `Launch at login` is enabled but the app does not start after login,
+toggle the checkbox off and on from the panel, or toggle Launch at Login
+from the menu. The app stores its login item in:
 
 ```text
 ~/Library/LaunchAgents/com.nederev.SidecarReconnector.plist
 ```
+
+If the global hotkey does not reconnect, use the edit button in the
+panel to record a new shortcut. Another app may already own the selected
+key combination. Check the app log for:
+
+```text
+hotkey registration failed
+```
+
+Default standalone hotkey:
+
+```text
+ctrl + alt + cmd + u
+```
+
+## Wake Or Login Automation Does Not Run
+
+The native app must already be running to observe wake/session/display
+events. Enable `Launch at login` in the panel if you want automatic
+startup after login.
+
+The app watches:
+
+- system wake
+- screen wake
+- session active after unlock
+- display configuration changes
+
+When one of those events fires, it schedules reconnect retries after 8,
+15, and 30 seconds.
 
 ## Build Fails
 
@@ -103,7 +134,7 @@ change method signatures, or add entitlement checks.
 Run:
 
 ```sh
-~/.hammerspoon/bin/sidecarctl list
+build/sidecarctl list
 ```
 
 If listing fails after a macOS update, the private API surface needs
