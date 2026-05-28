@@ -459,8 +459,8 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     self.controlPanel.title = [self appTitle];
     self.controlPanel.releasedWhenClosed = NO;
     self.controlPanel.hidesOnDeactivate = NO;
-    self.controlPanel.level = NSFloatingWindowLevel;
-    self.controlPanel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
+    self.controlPanel.level = NSNormalWindowLevel;
+    self.controlPanel.collectionBehavior = NSWindowCollectionBehaviorManaged;
 
     NSView *content = self.controlPanel.contentView;
     content.wantsLayer = YES;
