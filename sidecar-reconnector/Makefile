@@ -2,25 +2,49 @@ PREFIX ?= $(HOME)/.hammerspoon
 BINDIR ?= $(PREFIX)/bin
 MODULEDIR ?= $(PREFIX)
 BUILD_DIR ?= build
+APPDIR ?= $(HOME)/Applications
 
 CC ?= clang
 CFLAGS ?= -fobjc-arc -fblocks -Wall -Wextra -Wpedantic
-FRAMEWORKS := -framework Foundation
+CLI_FRAMEWORKS := -framework Foundation
+APP_FRAMEWORKS := -framework Foundation -framework AppKit -framework Carbon
 
 BIN := $(BUILD_DIR)/sidecarctl
-SRC := src/sidecarctl.m
+APP_BUNDLE := $(BUILD_DIR)/Sidecar\ Reconnector.app
+APP_CONTENTS := $(APP_BUNDLE)/Contents
+APP_MACOS := $(APP_CONTENTS)/MacOS
+APP_BIN := $(APP_MACOS)/SidecarReconnector
+APP_INFO := $(APP_CONTENTS)/Info.plist
+CORE_SRC := src/SidecarController.m
+CLI_SRC := src/sidecarctl.m
+APP_SRC := src/SidecarReconnectorApp.m
 
-.PHONY: all clean install install-hammerspoon reload test
+.PHONY: all clean install install-app install-hammerspoon reload test
 
-all: $(BIN)
+all: $(BIN) $(APP_BUNDLE)
 
-$(BIN): $(SRC)
+$(BIN): $(CLI_SRC) $(CORE_SRC) src/SidecarController.h
 	mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(FRAMEWORKS) $(SRC) -o $(BIN)
+	$(CC) $(CFLAGS) $(CLI_FRAMEWORKS) $(CLI_SRC) $(CORE_SRC) -o $(BIN)
+
+$(APP_BUNDLE): $(APP_BIN) $(APP_INFO)
+
+$(APP_BIN): $(APP_SRC) $(CORE_SRC) src/SidecarController.h
+	mkdir -p $(APP_MACOS)
+	$(CC) $(CFLAGS) $(APP_FRAMEWORKS) $(APP_SRC) $(CORE_SRC) -o $(APP_BIN)
+
+$(APP_INFO): app/Info.plist
+	mkdir -p $(APP_CONTENTS)
+	cp app/Info.plist $(APP_INFO)
 
 install: all install-hammerspoon
 	mkdir -p $(BINDIR)
 	cp $(BIN) $(BINDIR)/sidecarctl
+
+install-app: all
+	mkdir -p "$(APPDIR)"
+	rm -rf "$(APPDIR)/Sidecar Reconnector.app"
+	cp -R "$(BUILD_DIR)/Sidecar Reconnector.app" "$(APPDIR)/Sidecar Reconnector.app"
 
 install-hammerspoon:
 	mkdir -p $(MODULEDIR)

@@ -50,6 +50,29 @@ Check the log:
 tail -f ~/.hammerspoon/sidecar-reconnector.log
 ```
 
+## Menu-Bar App Does Nothing
+
+Confirm the app is running by looking for the `Sidecar` menu-bar item.
+
+Open the app log from the menu or run:
+
+```sh
+tail -f ~/Library/Logs/SidecarReconnector.log
+```
+
+If the status says `Target not configured`, open the Target submenu and
+choose the iPad. The app will not reconnect without an explicit target
+unless exactly one display-capable Sidecar device was discovered on
+first launch.
+
+If Launch at Login is enabled but the app does not start after login,
+toggle Launch at Login off and on from the menu. The app stores its
+login item in:
+
+```text
+~/Library/LaunchAgents/com.nederev.SidecarReconnector.plist
+```
+
 ## Build Fails
 
 Install Xcode Command Line Tools:
@@ -63,6 +86,13 @@ Then rebuild:
 ```sh
 make clean
 make
+```
+
+The default build should produce both:
+
+```text
+build/sidecarctl
+build/Sidecar Reconnector.app
 ```
 
 ## macOS Update Broke It

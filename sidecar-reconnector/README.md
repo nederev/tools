@@ -4,8 +4,10 @@ Reconnect a Mac to an iPad Sidecar display after wake or unlock,
 without opening Control Center and without UI scripting.
 
 The command-line helper uses Apple private Sidecar APIs from
-`SidecarCore.framework`. The Hammerspoon module watches wake/unlock
-events and runs the helper when the Sidecar display is missing.
+`SidecarCore.framework`. The native menu-bar app watches wake/unlock
+and display events, then reconnects the configured Sidecar display
+when it is missing. A legacy Hammerspoon module remains available for
+users who already rely on Hammerspoon.
 
 ## Status
 
@@ -13,7 +15,53 @@ Tested on macOS 15.7.7 with an M3 Mac and an iPad Air.
 
 This is a private API utility. It can break after macOS updates.
 
-## Install
+## Menu-Bar App
+
+Build the app and CLI:
+
+```sh
+make clean all
+```
+
+This produces:
+
+```text
+build/sidecarctl
+build/Sidecar Reconnector.app
+```
+
+Install the app into `~/Applications`:
+
+```sh
+make install-app
+```
+
+Launch `~/Applications/Sidecar Reconnector.app`. The app runs as a
+menu-bar item named `Sidecar` and has no Dock icon.
+
+The menu includes:
+
+- current Sidecar status
+- reconnect now
+- target iPad selection from discovered Sidecar devices
+- launch at login toggle
+- open log
+- quit
+
+On first launch, if exactly one display-capable Sidecar device is
+discoverable, the app selects it automatically. If multiple devices are
+discoverable, choose the target from the menu before reconnecting.
+
+Logs are written to:
+
+```text
+~/Library/Logs/SidecarReconnector.log
+```
+
+## Hammerspoon Install
+
+Hammerspoon is no longer required for the default app flow. Use this
+section only if you want the legacy Hammerspoon watcher.
 
 Install [Hammerspoon](https://www.hammerspoon.org/) first if you
 want wake/unlock automation and hotkeys.
@@ -44,7 +92,7 @@ If that fails:
 xcode-select --install
 ```
 
-Then build and install:
+Then build and install the legacy helper and module:
 
 ```sh
 make clean all
@@ -78,8 +126,8 @@ build/sidecarctl list
 build/sidecarctl connect --name "Your iPad name"
 ```
 
-Without Hammerspoon you do not get wake/unlock automation or the
-global hotkey.
+Without the menu-bar app or Hammerspoon you do not get wake/unlock
+automation.
 
 ## Find Your iPad
 
@@ -118,6 +166,17 @@ Or use the default hotkey:
 ```text
 ctrl + alt + cmd + u
 ```
+
+## Menu-Bar App Behavior
+
+The app:
+
+- checks whether Sidecar is already connected
+- no-ops when connected
+- reconnects after wake/unlock or display changes when disconnected
+- retries after 8, 15, and 30 seconds because iPads can be slow to wake
+- logs to `~/Library/Logs/SidecarReconnector.log`
+- can install or remove its own launch-at-login entry
 
 ## Hammerspoon Behavior
 

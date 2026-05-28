@@ -5,8 +5,9 @@ Reconnector on a user's Mac.
 
 ## Goal
 
-Install a command-line helper and optional Hammerspoon watcher that
-reconnects Sidecar after wake/unlock without opening Control Center.
+Install a native menu-bar app, command-line helper, and optional
+Hammerspoon watcher that reconnect Sidecar after wake/unlock without
+opening Control Center.
 
 ## Requirements
 
@@ -47,6 +48,31 @@ Expected result:
 
 ```text
 sidecar-reconnector/build/sidecarctl
+sidecar-reconnector/build/Sidecar Reconnector.app
+```
+
+## Install Native App
+
+Run:
+
+```sh
+make -C sidecar-reconnector install-app
+```
+
+This installs:
+
+```text
+~/Applications/Sidecar Reconnector.app
+```
+
+Launch the app and use the `Sidecar` menu-bar item to choose the target
+iPad. Use Launch at Login from the app menu if the app should start
+automatically after login.
+
+Validate the app log:
+
+```sh
+tail -f ~/Library/Logs/SidecarReconnector.log
 ```
 
 ## Discover Devices
