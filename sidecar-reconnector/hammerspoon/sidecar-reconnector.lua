@@ -75,6 +75,11 @@ local function targetArgs()
   return table.concat(args, " ")
 end
 
+local function hasTargetConfig()
+  return (config.targetName and config.targetName ~= "") or
+    (config.targetIdentifier and config.targetIdentifier ~= "")
+end
+
 function M.dumpDisplays()
   log("--- display dump start ---")
 
@@ -132,6 +137,12 @@ function M.isConnected()
 end
 
 function M.runReconnect(reason)
+  if not hasTargetConfig() then
+    log("runReconnect refused: targetName or targetIdentifier is required")
+    hs.alert.show("Sidecar target not configured")
+    return false
+  end
+
   local connected, detail = M.isConnected()
   log("runReconnect reason=" .. tostring(reason) .. " connected=" .. tostring(connected) .. " detail=" .. tostring(detail))
 
@@ -166,6 +177,11 @@ local function stopTimers()
 end
 
 function M.ensureConnected(reason)
+  if not hasTargetConfig() then
+    log("ensureConnected refused: targetName or targetIdentifier is required")
+    return false
+  end
+
   local connected, detail = M.isConnected()
   log("ensureConnected reason=" .. tostring(reason) .. " connected=" .. tostring(connected) .. " detail=" .. tostring(detail))
 

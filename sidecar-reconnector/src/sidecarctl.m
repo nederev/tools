@@ -11,6 +11,7 @@
 
 typedef NS_ENUM(NSInteger, SidecarCtlCommand) {
   SidecarCtlCommandHelp,
+  SidecarCtlCommandInvalid,
   SidecarCtlCommandList,
   SidecarCtlCommandStatus,
   SidecarCtlCommandConnect,
@@ -52,7 +53,31 @@ static NSString *shortIdentifier(NSString *identifier) {
   return identifier ? identifier : @"";
 }
 
-static BOOL matchesTarget(id device) {
+static NSString *deviceKey(id device) {
+  return [NSString stringWithFormat:@"%@|%@|%@",
+          objectString(device, @"identifier"),
+          objectString(device, @"name"),
+          [device description] ? [device description] : @""];
+}
+
+static BOOL sameDevice(id a, id b) {
+  return [[deviceKey(a) description] isEqualToString:deviceKey(b)];
+}
+
+static BOOL matchesTargetExactly(id device) {
+  if (!TargetName.length && !TargetID.length) {
+    return NO;
+  }
+
+  NSString *name = objectString(device, @"name");
+  NSString *identifier = objectString(device, @"identifier");
+
+  if (TargetName.length && [name localizedCaseInsensitiveCompare:TargetName] == NSOrderedSame) return YES;
+  if (TargetID.length && [identifier localizedCaseInsensitiveCompare:TargetID] == NSOrderedSame) return YES;
+  return NO;
+}
+
+static BOOL matchesTargetFuzzy(id device) {
   if (!TargetName.length && !TargetID.length) {
     return NO;
   }
@@ -154,19 +179,12 @@ static NSArray *displayAgentDevices(void) {
 static void appendUniqueDevices(NSMutableArray *target, NSArray *source) {
   NSMutableSet *seen = [NSMutableSet set];
   for (id device in target) {
-    NSString *key = [NSString stringWithFormat:@"%@|%@|%@",
-                     objectString(device, @"identifier"),
-                     objectString(device, @"name"),
-                     [device description] ? [device description] : @""];
-    [seen addObject:key];
+    [seen addObject:deviceKey(device)];
   }
 
   for (id device in source ? source : @[]) {
     if (!isSidecarDevice(device)) continue;
-    NSString *key = [NSString stringWithFormat:@"%@|%@|%@",
-                     objectString(device, @"identifier"),
-                     objectString(device, @"name"),
-                     [device description] ? [device description] : @""];
+    NSString *key = deviceKey(device);
     if ([seen containsObject:key]) continue;
     [target addObject:device];
     [seen addObject:key];
@@ -192,11 +210,14 @@ static NSArray *discoverDevices(id manager) {
   return devices;
 }
 
-static id firstMatchingDevice(NSArray *devices) {
+static NSArray *matchingDevices(NSArray *devices, BOOL exact) {
+  NSMutableArray *matches = [NSMutableArray array];
   for (id device in devices) {
-    if (matchesTarget(device)) return device;
+    if (exact ? matchesTargetExactly(device) : matchesTargetFuzzy(device)) {
+      [matches addObject:device];
+    }
   }
-  return nil;
+  return matches;
 }
 
 static id onlyDisplayCandidate(NSArray *devices) {
@@ -223,7 +244,7 @@ static SidecarCtlCommand parseArgs(int argc, const char **argv) {
     return SidecarCtlCommandHelp;
   } else {
     fprintf(stderr, "unknown command: %s\n", argv[1]);
-    return SidecarCtlCommandHelp;
+    return SidecarCtlCommandInvalid;
   }
 
   for (int i = 2; i < argc; i++) {
@@ -233,7 +254,7 @@ static SidecarCtlCommand parseArgs(int argc, const char **argv) {
       TargetID = [NSString stringWithUTF8String:argv[++i]];
     } else {
       fprintf(stderr, "unknown or incomplete option: %s\n", argv[i]);
-      return SidecarCtlCommandHelp;
+      return SidecarCtlCommandInvalid;
     }
   }
 
@@ -246,6 +267,10 @@ int main(int argc, const char **argv) {
     if (command == SidecarCtlCommandHelp) {
       printUsage();
       return argc < 2 ? 2 : 0;
+    }
+    if (command == SidecarCtlCommandInvalid) {
+      printUsage();
+      return 2;
     }
 
     void *handle = dlopen("/System/Library/PrivateFrameworks/SidecarCore.framework/SidecarCore", RTLD_LAZY | RTLD_GLOBAL);
@@ -273,8 +298,25 @@ int main(int argc, const char **argv) {
       return 0;
     }
 
-    id target = firstMatchingDevice(allKnownDevices);
-    if (!target && !TargetName.length && !TargetID.length) {
+    id target = nil;
+    NSArray *exactMatches = matchingDevices(allKnownDevices, YES);
+    NSArray *fuzzyMatches = @[];
+    if (exactMatches.count == 1) {
+      target = exactMatches.firstObject;
+    } else if (exactMatches.count > 1) {
+      fprintf(stderr, "ambiguous-target exactMatchCount=%lu\n", (unsigned long)exactMatches.count);
+      for (id device in exactMatches) printDevice(@"match", device);
+      return 21;
+    } else if (TargetName.length || TargetID.length) {
+      fuzzyMatches = matchingDevices(allKnownDevices, NO);
+      if (fuzzyMatches.count == 1) {
+        target = fuzzyMatches.firstObject;
+      } else if (fuzzyMatches.count > 1) {
+        fprintf(stderr, "ambiguous-target fuzzyMatchCount=%lu\n", (unsigned long)fuzzyMatches.count);
+        for (id device in fuzzyMatches) printDevice(@"match", device);
+        return 21;
+      }
+    } else {
       target = onlyDisplayCandidate(allKnownDevices);
     }
 
@@ -284,9 +326,12 @@ int main(int argc, const char **argv) {
       return 20;
     }
 
-    id connectedTarget = firstMatchingDevice(connected);
-    if (!connectedTarget && target && [connected containsObject:target]) {
-      connectedTarget = target;
+    id connectedTarget = nil;
+    for (id device in connected) {
+      if (sameDevice(device, target)) {
+        connectedTarget = device;
+        break;
+      }
     }
 
     if (connectedTarget) {
