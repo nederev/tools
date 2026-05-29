@@ -522,6 +522,14 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     content.wantsLayer = YES;
     content.layer.backgroundColor = [NSColor colorWithRed:0.08 green:0.09 blue:0.10 alpha:1.0].CGColor;
 
+    // Faint version marker, top-right corner.
+    NSTextField *versionLabel = [self labelWithFrame:NSMakeRect(360, 215, 118, 13)
+                                                text:[NSString stringWithFormat:@"v%@", [self appVersion]]
+                                                font:[NSFont systemFontOfSize:9.0 weight:NSFontWeightRegular]
+                                               color:[NSColor colorWithWhite:1.0 alpha:0.22]];
+    versionLabel.alignment = NSTextAlignmentRight;
+    [content addSubview:versionLabel];
+
     CGFloat left = 22.0;
     CGFloat labelWidth = 92.0;
     CGFloat controlX = 128.0;
@@ -545,18 +553,18 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
                                         borderColor:iconStroke
                                         borderWidth:1.4]];
 
-    self.panelSelectedLabel = [self labelWithFrame:NSMakeRect(86, 188, 350, 22)
+    self.panelSelectedLabel = [self labelWithFrame:NSMakeRect(86, 187, 350, 20)
                                              text:@"Selected: none"
                                              font:[NSFont systemFontOfSize:15.0 weight:NSFontWeightBold]
                                             color:[NSColor colorWithWhite:0.94 alpha:1.0]];
     [content addSubview:self.panelSelectedLabel];
 
-    self.panelStatusPill = [self roundedSurfaceWithFrame:NSMakeRect(86, 171, 8, 8)
+    self.panelStatusPill = [self roundedSurfaceWithFrame:NSMakeRect(86, 174, 8, 8)
                                                    color:[NSColor colorWithRed:0.36 green:0.54 blue:0.88 alpha:1.0]
                                                   radius:4.0];
     [content addSubview:self.panelStatusPill];
 
-    self.panelStatusLabel = [self labelWithFrame:NSMakeRect(102, 164, 150, 20)
+    self.panelStatusLabel = [self labelWithFrame:NSMakeRect(102, 169, 160, 16)
                                             text:@"Checking"
                                             font:[NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
                                            color:[NSColor colorWithWhite:0.82 alpha:1.0]];
