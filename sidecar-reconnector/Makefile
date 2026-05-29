@@ -13,8 +13,10 @@ BIN := $(BUILD_DIR)/sidecarctl
 APP_BUNDLE := $(BUILD_DIR)/Sidecar\ Reconnector.app
 APP_CONTENTS := $(APP_BUNDLE)/Contents
 APP_MACOS := $(APP_CONTENTS)/MacOS
+APP_RESOURCES := $(APP_CONTENTS)/Resources
 APP_BIN := $(APP_MACOS)/SidecarReconnector
 APP_INFO := $(APP_CONTENTS)/Info.plist
+APP_ICON := $(APP_RESOURCES)/SidecarReconnector.icns
 CORE_SRC := src/SidecarController.m
 CLI_SRC := src/sidecarctl.m
 APP_SRC := src/SidecarReconnectorApp.m
@@ -29,7 +31,7 @@ $(BIN): $(CLI_SRC) $(CORE_SRC) src/SidecarController.h
 	mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(CLI_FRAMEWORKS) $(CLI_SRC) $(CORE_SRC) -o $(BIN)
 
-$(APP_BUNDLE): $(APP_BIN) $(APP_INFO)
+$(APP_BUNDLE): $(APP_BIN) $(APP_INFO) $(APP_ICON)
 
 $(APP_BIN): $(APP_SRC) $(CORE_SRC) src/SidecarController.h
 	mkdir -p $(APP_MACOS)
@@ -38,6 +40,10 @@ $(APP_BIN): $(APP_SRC) $(CORE_SRC) src/SidecarController.h
 $(APP_INFO): app/Info.plist
 	mkdir -p $(APP_CONTENTS)
 	cp app/Info.plist $(APP_INFO)
+
+$(APP_ICON): app/Resources/SidecarReconnector.icns app/Resources/SidecarReconnectorIcon.png
+	mkdir -p $(APP_RESOURCES)
+	cp -R app/Resources/. $(APP_RESOURCES)/
 
 install: all install-hammerspoon
 	mkdir -p $(BINDIR)

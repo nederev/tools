@@ -63,6 +63,11 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   (void)notification;
   GlobalAppDelegate = self;
   [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+  NSString *iconPath = [[NSBundle mainBundle] pathForResource:@"SidecarReconnectorIcon" ofType:@"png"];
+  NSImage *iconImage = iconPath.length ? [[NSImage alloc] initWithContentsOfFile:iconPath] : nil;
+  if (iconImage != nil) {
+    [NSApp setApplicationIconImage:iconImage];
+  }
   self.controller = [SidecarController new];
   self.retryTimers = [NSMutableArray array];
   [self setupStatusItem];
