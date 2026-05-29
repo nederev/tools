@@ -16,6 +16,7 @@ CLI_FRAMEWORKS := -framework Foundation
 APP_FRAMEWORKS := -framework Foundation -framework AppKit -framework Carbon
 
 BIN := $(BUILD_DIR)/sidecarctl
+TEST_BIN := $(BUILD_DIR)/sidecar-tests
 APP_BUNDLE := $(BUILD_DIR)/Sidecar\ Reconnector.app
 APP_CONTENTS := $(APP_BUNDLE)/Contents
 APP_MACOS := $(APP_CONTENTS)/MacOS
@@ -26,16 +27,21 @@ APP_ICON := $(APP_RESOURCES)/SidecarReconnector.icns
 CORE_SRC := src/SidecarController.m
 CLI_SRC := src/sidecarctl.m
 APP_SRC := src/SidecarReconnectorApp.m
+TEST_SRC := tests/resolve_tests.m
 VERSION ?=
 BUILD ?=
 
-.PHONY: all clean install install-app install-app-health launch-app install-hammerspoon reload test bump-version bump-build release-build dmg app-health
+.PHONY: all clean install install-app install-app-health launch-app install-hammerspoon reload test unit-test smoke bump-version bump-build release-build dmg app-health
 
 all: $(BIN) $(APP_BUNDLE)
 
 $(BIN): $(CLI_SRC) $(CORE_SRC) src/SidecarController.h
 	mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(CLI_FRAMEWORKS) $(CLI_SRC) $(CORE_SRC) -o $(BIN)
+
+$(TEST_BIN): $(TEST_SRC) $(CORE_SRC) src/SidecarController.h
+	mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(CLI_FRAMEWORKS) -Isrc $(TEST_SRC) $(CORE_SRC) -o $(TEST_BIN)
 
 $(APP_BUNDLE): $(APP_BIN) $(APP_INFO) $(APP_ICON)
 
@@ -77,7 +83,12 @@ install-hammerspoon:
 reload:
 	/Applications/Hammerspoon.app/Contents/Frameworks/hs/hs -c 'hs.reload()'
 
-test: all
+unit-test: $(TEST_BIN)
+	$(TEST_BIN)
+
+test: unit-test
+
+smoke: all
 	$(BIN) list
 
 bump-version:

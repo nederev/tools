@@ -49,7 +49,7 @@ menu-bar item named `Sidecar`.
 The app title includes the bundle short version, for example:
 
 ```text
-Sidecar Reconnector v0.1
+Sidecar Reconnector v0.15
 ```
 
 The control panel includes:
@@ -151,6 +151,22 @@ The health check reports:
 - log freshness
 - hotkey registration evidence from the app log
 - configured target preference
+
+## Tests
+
+Run the device-independent unit tests for the target-resolution logic
+(exact/fuzzy matching, ambiguity, and auto-select). These do not touch the
+private Sidecar APIs and need no attached iPad:
+
+```sh
+make test
+```
+
+To smoke-test discovery against real hardware instead:
+
+```sh
+make smoke
+```
 
 ## Hotkey
 

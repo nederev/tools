@@ -24,6 +24,9 @@ Agent command quick reference:
 # Build CLI and native app.
 make -C sidecar-reconnector clean all
 
+# Run device-independent unit tests for the resolver logic.
+make -C sidecar-reconnector test
+
 # Bump the visible app version and increment CFBundleVersion.
 make -C sidecar-reconnector bump-version VERSION=0.2
 
@@ -51,7 +54,7 @@ Versioning rules:
 
 - The control-panel title is derived from
   `CFBundleShortVersionString`, for example
-  `Sidecar Reconnector v0.1`.
+  `Sidecar Reconnector v0.15`.
 - When changing visible UI or shipping a user-facing rebuild, bump the
   version or at least the build number before rebuilding.
 - `scripts/bump-version.sh` owns plist edits; do not hand-edit

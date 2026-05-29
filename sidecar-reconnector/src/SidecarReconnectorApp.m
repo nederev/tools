@@ -714,7 +714,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     [self.targetPopup removeAllItems];
   }
 
-    if (error) {
+  if (error) {
     NSMenuItem *errorItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"Error: %@", error.localizedDescription] action:nil keyEquivalent:@""];
     errorItem.enabled = NO;
     [targetMenu addItem:errorItem];

@@ -141,6 +141,10 @@ static void appendUniqueRawDevices(NSMutableArray *target, NSArray *source) {
 
 @interface SidecarController ()
 @property(nonatomic, strong) NSArray *lastRawDevices;
+// Internal variants that assume the caller already holds @synchronized(self).
+- (NSArray<SRCDevice *> *)locked_listDevicesWithError:(NSError **)error;
+- (SRCStatus)locked_statusForTarget:(SRCTarget *)target device:(SRCDevice **)device error:(NSError **)error;
+- (BOOL)locked_connectTarget:(SRCTarget *)target device:(SRCDevice **)device error:(NSError **)error;
 @end
 
 @implementation SidecarController
@@ -180,31 +184,39 @@ static void appendUniqueRawDevices(NSMutableArray *target, NSArray *source) {
   conn.remoteObjectInterface = iface;
   [conn resume];
 
+  // Reply blocks are delivered on an XPC-managed queue, so we wait on a
+  // semaphore instead of spinning the caller's run loop. The previous approach
+  // called CFRunLoopStop(CFRunLoopGetMain()) from the reply block, which pokes
+  // AppKit's run loop when this runs off the main thread (as the app does).
+  dispatch_semaphore_t ready = dispatch_semaphore_create(0);
   id proxy = [conn remoteObjectProxyWithErrorHandler:^(NSError *error) {
     fprintf(stderr, "display-agent-xpc-error: %s\n", error.description.UTF8String);
-    CFRunLoopStop(CFRunLoopGetMain());
+    dispatch_semaphore_signal(ready);
   }];
 
   NSMutableArray *out = [NSMutableArray array];
-  __block BOOL done = NO;
   [proxy displayAgentDevices:^(id currentDevice, NSArray *devices, NSError *error) {
     if (error) {
       fprintf(stderr, "display-agent-devices-error: %s\n", error.description.UTF8String);
     }
-    if (isSidecarDevice(currentDevice)) [out addObject:currentDevice];
-    for (id device in devices ? devices : @[]) {
-      if (isSidecarDevice(device)) [out addObject:device];
+    @synchronized(out) {
+      if (isSidecarDevice(currentDevice)) [out addObject:currentDevice];
+      for (id device in devices ? devices : @[]) {
+        if (isSidecarDevice(device)) [out addObject:device];
+      }
     }
-    done = YES;
-    CFRunLoopStop(CFRunLoopGetMain());
+    dispatch_semaphore_signal(ready);
   }];
 
-  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
-  while (!done && [deadline timeIntervalSinceNow] > 0) {
-    [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.2]];
-  }
+  dispatch_semaphore_wait(ready, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)));
   [conn invalidate];
-  return out;
+
+  // Snapshot under the lock in case a late reply mutates `out` after the timeout.
+  NSArray *result;
+  @synchronized(out) {
+    result = [out copy];
+  }
+  return result;
 }
 
 - (NSSet *)allowedXpcClasses {
@@ -242,6 +254,12 @@ static void appendUniqueRawDevices(NSMutableArray *target, NSArray *source) {
 }
 
 - (NSArray<SRCDevice *> *)listDevicesWithError:(NSError **)error {
+  @synchronized(self) {
+    return [self locked_listDevicesWithError:error];
+  }
+}
+
+- (NSArray<SRCDevice *> *)locked_listDevicesWithError:(NSError **)error {
   id manager = [self managerWithError:error];
   if (!manager) return @[];
 
@@ -309,7 +327,13 @@ static void appendUniqueRawDevices(NSMutableArray *target, NSArray *source) {
 }
 
 - (SRCStatus)statusForTarget:(SRCTarget *)target device:(SRCDevice **)device error:(NSError **)error {
-  NSArray *devices = [self listDevicesWithError:error];
+  @synchronized(self) {
+    return [self locked_statusForTarget:target device:device error:error];
+  }
+}
+
+- (SRCStatus)locked_statusForTarget:(SRCTarget *)target device:(SRCDevice **)device error:(NSError **)error {
+  NSArray *devices = [self locked_listDevicesWithError:error];
   if (error && *error) return SRCStatusDisconnected;
   SRCResolveResult *result = [self resolveTarget:target devices:devices];
   if (result.ambiguous) {
@@ -325,8 +349,14 @@ static void appendUniqueRawDevices(NSMutableArray *target, NSArray *source) {
 }
 
 - (BOOL)connectTarget:(SRCTarget *)target device:(SRCDevice **)device error:(NSError **)error {
+  @synchronized(self) {
+    return [self locked_connectTarget:target device:device error:error];
+  }
+}
+
+- (BOOL)locked_connectTarget:(SRCTarget *)target device:(SRCDevice **)device error:(NSError **)error {
   SRCDevice *resolved = nil;
-  SRCStatus status = [self statusForTarget:target device:&resolved error:error];
+  SRCStatus status = [self locked_statusForTarget:target device:&resolved error:error];
   if (error && *error) return NO;
   if (device) *device = resolved;
   if (status == SRCStatusConnected) return YES;
@@ -346,25 +376,22 @@ static void appendUniqueRawDevices(NSMutableArray *target, NSArray *source) {
     return NO;
   }
 
-  __block BOOL done = NO;
-  __block NSError *connectError = nil;
-  if ([manager respondsToSelector:@selector(connectToDevice:completion:)]) {
-    void (^completion)(NSError *) = ^(NSError *callbackError) {
-      connectError = callbackError;
-      done = YES;
-      CFRunLoopStop(CFRunLoopGetMain());
-    };
-    ((void (*)(id, SEL, id, id))objc_msgSend)(manager, @selector(connectToDevice:completion:), rawTarget, completion);
-  } else {
+  if (![manager respondsToSelector:@selector(connectToDevice:completion:)]) {
     if (error) *error = SRCError(SRCErrorConnectUnavailable, @"connectToDevice:completion: unavailable");
     return NO;
   }
 
-  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:20];
-  while (!done && [deadline timeIntervalSinceNow] > 0) {
-    [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.2]];
-  }
-  if (!done) {
+  // The completion is delivered on an XPC-managed queue; wait on a semaphore
+  // rather than spinning (and stopping) the caller's run loop.
+  dispatch_semaphore_t finished = dispatch_semaphore_create(0);
+  __block NSError *connectError = nil;
+  void (^completion)(NSError *) = ^(NSError *callbackError) {
+    connectError = callbackError;
+    dispatch_semaphore_signal(finished);
+  };
+  ((void (*)(id, SEL, id, id))objc_msgSend)(manager, @selector(connectToDevice:completion:), rawTarget, completion);
+
+  if (dispatch_semaphore_wait(finished, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC))) != 0) {
     if (error) *error = SRCError(SRCErrorConnectTimeout, @"connect-timeout");
     return NO;
   }
