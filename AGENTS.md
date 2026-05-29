@@ -58,9 +58,14 @@ Menu-bar app / Dock behavior:
   item, so a Dock presence would add nothing.
 - The control panel is an `NSPopover` (transient) anchored under the status
   item: left-click toggles it, right-click shows the menu. A `popoverDidClose`
-  timestamp + 250ms guard in `togglePopover` avoids the click-to-open /
-  transient-dismiss race. It does not auto-open on launch. Hidden test hook:
-  `open -a "Sidecar Reconnector" --args --show-panel`.
+  timestamp + `PopoverReopenGuard` window in `togglePopover` avoids the
+  click-to-open / transient-dismiss race. It does not auto-open on launch.
+- Device discovery (`listDevicesWithError:`) does blocking XPC, so it MUST run
+  off the main thread. `refreshAsyncAllowAutoSelect:` fetches the device list
+  once on a background queue, then updates the target menu/popup AND the status
+  on the main thread from that one list (status is derived with the pure
+  `resolveTarget:devices:` — no second discovery). Do not call the controller's
+  list/status/connect methods on the main thread.
 - Notch gotcha (verified on a notched MacBook Air): a freshly added
   `NSStatusItem` on a full menu bar gets parked under the notch and is
   invisible even though `visible == YES` and it has a valid window frame.
@@ -68,10 +73,6 @@ Menu-bar app / Dock behavior:
   `NSUserDefaults` key `"NSStatusItem Preferred Position <autosaveName>"`
   to `0` (rightmost slot, next to Control Center) on first run only, so the
   user can still Cmd-drag it afterwards. Lower position value = further right.
-- `SidecarReconnectorApp.m` logs `statusitem-diag` lines (frame, screen,
-  notch safe-area). Use them to confirm placement without a screenshot; the
-  item is hidden when its x range overlaps the notch gap (between
-  `auxiliaryTopLeftArea` and `auxiliaryTopRightArea`).
 - To verify visually, `screencapture` needs the host app (e.g. the terminal
   or Claude) to have Screen Recording permission; `-R` region captures can
   return black even then, so capture full-screen and crop. If a foreground

@@ -12,18 +12,34 @@ static NSString *const LogPath = @"~/Library/Logs/SidecarReconnector.log";
 static const UInt32 HotKeySignature = 0x53524331;
 static const UInt32 ReconnectHotKeyID = 1;
 
+// A click on the icon while the popover is open arrives just after the
+// transient auto-dismiss; treat a click this soon after a close as "the click
+// that closed it" and don't re-open. Reliable now that device discovery no
+// longer blocks the main thread.
+static const NSTimeInterval PopoverReopenGuard = 0.25;
+
+typedef NS_ENUM(NSInteger, SRNotify) {
+  SRNotifyNone = 0,     // silent (background wake/retry reconnects)
+  SRNotifyFailureOnly,  // alert only on failure (global hotkey)
+  SRNotifyAll,          // alert on success and failure (explicit user action)
+};
+
+typedef NS_ENUM(NSInteger, SRPanelStatusKind) {
+  SRPanelStatusChecking,
+  SRPanelStatusConnected,
+  SRPanelStatusDisconnected,
+  SRPanelStatusAttention,  // not configured / not found / ambiguous / error
+};
+
 @class AppDelegate;
 static AppDelegate *GlobalAppDelegate = nil;
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, NSPopoverDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate, NSPopoverDelegate>
 @property(nonatomic, strong) NSStatusItem *statusItem;
 @property(nonatomic, strong) NSMenu *statusMenu;
 @property(nonatomic, strong) NSMenuItem *statusMenuItem;
 @property(nonatomic, strong) NSMenuItem *targetMenuItem;
 @property(nonatomic, strong) NSMenuItem *launchAtLoginItem;
-@property(nonatomic, strong) NSMenuItem *mainStatusMenuItem;
-@property(nonatomic, strong) NSMenuItem *mainTargetMenuItem;
-@property(nonatomic, strong) NSMenuItem *mainLaunchAtLoginItem;
 @property(nonatomic, strong) NSPopover *popover;
 @property(nonatomic, strong) NSDate *popoverClosedAt;
 @property(nonatomic, strong) NSView *panelStatusPill;
@@ -76,33 +92,22 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   self.controller = [SidecarController new];
   self.retryTimers = [NSMutableArray array];
   [self setupStatusItem];
-  [self setupApplicationMenu];
   [self installHotKeyHandler];
   [self registerReconnectHotKey];
   [self registerNotifications];
   [self log:[NSString stringWithFormat:@"%@ app loaded", [self appTitle]]];
-  [self refreshTargetsAllowAutoSelect:YES];
   // Live in the menu bar: don't pop the panel on launch — it opens on click.
-  [self updateStatusMenuAsync];
-  // Hidden test hook: `open -a "Sidecar Reconnector" --args --show-panel`.
-  if ([[NSProcessInfo processInfo].arguments containsObject:@"--show-panel"]) {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-      [self showControlPanel:nil];
-    });
-  }
+  [self refreshAsyncAllowAutoSelect:YES];
 }
 
 - (void)setupStatusItem {
   self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
 
   // On a notched Mac with a full menu bar, a newly-added status item gets parked
-  // under the notch (physically invisible). Bias ours toward the rightmost
-  // third-party slot (next to Control Center) by seeding a high preferred
-  // position before linking the autosave name. The system then persists the
-  // user's own position if they Cmd-drag it later.
-  // Seed only when unset (first run): position 0 = rightmost third-party slot,
-  // next to Control Center, clear of the notch. After this the system persists
-  // wherever the user Cmd-drags it, so we don't fight their choice on relaunch.
+  // under the notch (physically invisible). Seed the preferred position to 0
+  // (rightmost third-party slot, next to Control Center, clear of the notch)
+  // only on first run; afterwards the system persists wherever the user
+  // Cmd-drags it, so we don't fight their choice on relaunch.
   NSString *autosave = @"SidecarReconnectorStatusItem";
   NSString *posKey = [@"NSStatusItem Preferred Position " stringByAppendingString:autosave];
   if ([[NSUserDefaults standardUserDefaults] objectForKey:posKey] == nil) {
@@ -166,13 +171,6 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   // Held for right-click; not assigned to statusItem.menu so left-clicks reach
   // our action (see statusItemClicked:).
   self.statusMenu = menu;
-
-  [self logStatusItemDiagnostics:@"create"];
-  // The menu bar lays the item out asynchronously, so its on-screen frame is
-  // only meaningful a moment later. Log it again so we can confirm placement.
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    [self logStatusItemDiagnostics:@"settled"];
-  });
 }
 
 - (void)statusItemClicked:(id)sender {
@@ -196,76 +194,22 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   self.statusItem.menu = nil;
 }
 
-- (void)logStatusItemDiagnostics:(NSString *)phase {
-  NSStatusBarButton *button = self.statusItem.button;
-  NSWindow *window = button.window;
-  NSScreen *screen = window.screen ? window.screen : [NSScreen mainScreen];
-  NSString *notch = @"n/a";
-  if (@available(macOS 12.0, *)) {
-    if (screen) {
-      NSRect leftArea = screen.auxiliaryTopLeftArea;
-      NSRect rightArea = screen.auxiliaryTopRightArea;
-      notch = [NSString stringWithFormat:@"safeTop=%.0f leftArea=%@ rightArea=%@",
-               screen.safeAreaInsets.top, NSStringFromRect(leftArea), NSStringFromRect(rightArea)];
-    }
-  }
-  [self log:[NSString stringWithFormat:
-             @"statusitem-diag phase=%@ visible=%@ button=%@ window=%@ frame=%@ screenFrame=%@ %@ length=%.1f",
-             phase ? phase : @"",
-             self.statusItem.visible ? @"yes" : @"no",
-             button ? @"yes" : @"no",
-             window ? @"yes" : @"no",
-             window ? NSStringFromRect(window.frame) : @"none",
-             screen ? NSStringFromRect(screen.frame) : @"none",
-             notch,
-             self.statusItem.length]];
+- (SRPanelStatusKind)statusKindForText:(NSString *)status {
+  // Check "Disconnected" before "Connected": the word "disconnected" contains
+  // the substring "connected".
+  if ([status localizedCaseInsensitiveContainsString:@"Checking"]) return SRPanelStatusChecking;
+  if ([status localizedCaseInsensitiveContainsString:@"Disconnected"]) return SRPanelStatusDisconnected;
+  if ([status localizedCaseInsensitiveContainsString:@"Connected"]) return SRPanelStatusConnected;
+  return SRPanelStatusAttention;
 }
 
 - (void)updateStatusItemForStatus:(NSString *)status {
   NSStatusBarButton *button = self.statusItem.button;
   button.toolTip = status.length ? status : [self appTitle];
-  NSColor *tint = nil;
-  if ([status localizedCaseInsensitiveContainsString:@"Disconnected"] ||
-      [status localizedCaseInsensitiveContainsString:@"not found"] ||
-      [status localizedCaseInsensitiveContainsString:@"not configured"]) {
-    tint = [NSColor systemRedColor];
-  }
-  button.contentTintColor = tint;
-}
-
-- (void)setupApplicationMenu {
-  NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@""];
-
-  NSMenuItem *appMenuItem = [[NSMenuItem alloc] initWithTitle:[self appTitle] action:nil keyEquivalent:@""];
-  NSMenu *appMenu = [[NSMenu alloc] initWithTitle:[self appTitle]];
-  [appMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Show Control Panel" action:@selector(showControlPanel:) keyEquivalent:@"p"]];
-  [appMenu addItem:[NSMenuItem separatorItem]];
-  [appMenu addItem:[[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"Quit %@", [self appTitle]] action:@selector(quit:) keyEquivalent:@"q"]];
-  appMenuItem.submenu = appMenu;
-  [mainMenu addItem:appMenuItem];
-
-  NSMenuItem *sidecarMenuItem = [[NSMenuItem alloc] initWithTitle:@"Sidecar" action:nil keyEquivalent:@""];
-  NSMenu *sidecarMenu = [[NSMenu alloc] initWithTitle:@"Sidecar"];
-  sidecarMenu.delegate = self;
-
-  self.mainStatusMenuItem = [[NSMenuItem alloc] initWithTitle:@"Status: Checking..." action:nil keyEquivalent:@""];
-  self.mainStatusMenuItem.enabled = NO;
-  [sidecarMenu addItem:self.mainStatusMenuItem];
-  [sidecarMenu addItem:[NSMenuItem separatorItem]];
-  [sidecarMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Reconnect Now" action:@selector(reconnectNow:) keyEquivalent:@"r"]];
-
-  self.mainTargetMenuItem = [[NSMenuItem alloc] initWithTitle:@"Target" action:nil keyEquivalent:@""];
-  self.mainTargetMenuItem.submenu = [[NSMenu alloc] initWithTitle:@"Target"];
-  [sidecarMenu addItem:self.mainTargetMenuItem];
-
-  self.mainLaunchAtLoginItem = [[NSMenuItem alloc] initWithTitle:@"Launch at Login" action:@selector(toggleLaunchAtLogin:) keyEquivalent:@""];
-  [sidecarMenu addItem:self.mainLaunchAtLoginItem];
-  [sidecarMenu addItem:[NSMenuItem separatorItem]];
-  [sidecarMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Open Log" action:@selector(openLog:) keyEquivalent:@"l"]];
-
-  sidecarMenuItem.submenu = sidecarMenu;
-  [mainMenu addItem:sidecarMenuItem];
-  [NSApp setMainMenu:mainMenu];
+  SRPanelStatusKind kind = [self statusKindForText:status];
+  button.contentTintColor = (kind == SRPanelStatusDisconnected || kind == SRPanelStatusAttention)
+                                ? [NSColor systemRedColor]
+                                : nil;
 }
 
 - (void)registerNotifications {
@@ -278,11 +222,8 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 
 - (void)menuWillOpen:(NSMenu *)menu {
   (void)menu;
-  [self refreshTargetsAllowAutoSelect:NO];
-  [self updateStatusMenuAsync];
-  self.launchAtLoginItem.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.mainLaunchAtLoginItem.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
+  [self refreshAsyncAllowAutoSelect:NO];
+  [self syncLaunchAtLoginControls];
 }
 
 - (NSString *)expandedLogPath {
@@ -357,8 +298,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [defaults synchronize];
   [self log:@"cleared target selection"];
   [self updateSelectedTargetLabel];
-  [self refreshTargetsAllowAutoSelect:NO];
-  [self updateStatusMenuAsync];
+  [self refreshAsyncAllowAutoSelect:NO];
 }
 
 - (void)installHotKeyHandler {
@@ -546,25 +486,27 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 - (void)updatePanelStatusAppearance:(NSString *)status {
   if (!self.panelStatusLabel) return;
 
-  BOOL connected = [status localizedCaseInsensitiveContainsString:@"Connected"];
-  BOOL disconnected = [status localizedCaseInsensitiveContainsString:@"Disconnected"];
-  BOOL checking = [status localizedCaseInsensitiveContainsString:@"Checking"];
-
-  NSString *label = @"Needs attention";
-  NSColor *background = [NSColor colorWithRed:0.36 green:0.27 blue:0.11 alpha:1.0];
-  NSColor *foreground = [NSColor colorWithWhite:0.78 alpha:1.0];
-  if (connected) {
-    label = @"Connected";
-    background = [NSColor colorWithRed:0.28 green:0.78 blue:0.36 alpha:1.0];
-    foreground = [NSColor colorWithWhite:0.82 alpha:1.0];
-  } else if (disconnected) {
-    label = @"Disconnected";
-    background = [NSColor colorWithRed:0.90 green:0.28 blue:0.28 alpha:1.0];
-    foreground = [NSColor colorWithWhite:0.82 alpha:1.0];
-  } else if (checking) {
-    label = @"Checking";
-    background = [NSColor colorWithRed:0.36 green:0.54 blue:0.88 alpha:1.0];
-    foreground = [NSColor colorWithWhite:0.82 alpha:1.0];
+  NSString *label;
+  NSColor *background;
+  NSColor *foreground = [NSColor colorWithWhite:0.82 alpha:1.0];
+  switch ([self statusKindForText:status]) {
+    case SRPanelStatusConnected:
+      label = @"Connected";
+      background = [NSColor colorWithRed:0.28 green:0.78 blue:0.36 alpha:1.0];
+      break;
+    case SRPanelStatusDisconnected:
+      label = @"Disconnected";
+      background = [NSColor colorWithRed:0.90 green:0.28 blue:0.28 alpha:1.0];
+      break;
+    case SRPanelStatusChecking:
+      label = @"Checking";
+      background = [NSColor colorWithRed:0.36 green:0.54 blue:0.88 alpha:1.0];
+      break;
+    case SRPanelStatusAttention:
+      label = @"Needs attention";
+      background = [NSColor colorWithRed:0.36 green:0.27 blue:0.11 alpha:1.0];
+      foreground = [NSColor colorWithWhite:0.78 alpha:1.0];
+      break;
   }
 
   self.panelStatusLabel.stringValue = label;
@@ -691,7 +633,6 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     self.launchAtLoginCheckbox.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium];
     self.launchAtLoginCheckbox.target = self;
     self.launchAtLoginCheckbox.action = @selector(toggleLaunchAtLogin:);
-    self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
     self.launchAtLoginCheckbox.toolTip = @"Start Sidecar Reconnector when you log in";
     [content addSubview:self.launchAtLoginCheckbox];
 
@@ -732,9 +673,8 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   (void)sender;
   [self ensurePopover];
   [self updateSelectedTargetLabel];
-  [self refreshTargetsAllowAutoSelect:NO];
-  self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
-  [self updateStatusMenuAsync];
+  [self syncLaunchAtLoginControls];
+  [self refreshAsyncAllowAutoSelect:NO];
 
   NSStatusBarButton *button = self.statusItem.button;
   if (button && !self.popover.isShown) {
@@ -756,9 +696,8 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   }
   // Clicking the icon while the popover is open first triggers the transient
   // auto-dismiss (popoverDidClose), then this action. Without this guard we'd
-  // immediately re-open it. Treat a click within 250ms of a close as "just
-  // close it" and don't re-open.
-  if (self.popoverClosedAt && [[NSDate date] timeIntervalSinceDate:self.popoverClosedAt] < 0.25) {
+  // immediately re-open it.
+  if (self.popoverClosedAt && [[NSDate date] timeIntervalSinceDate:self.popoverClosedAt] < PopoverReopenGuard) {
     return;
   }
   [self showControlPanel:nil];
@@ -802,21 +741,32 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   SRCDevice *device = sender.representedObject;
   if (![device isKindOfClass:[SRCDevice class]]) return;
   [self setSelectedDevice:device];
-  [self refreshTargetsAllowAutoSelect:NO];
-  [self updateStatusMenuAsync];
+  [self refreshAsyncAllowAutoSelect:NO];
 }
 
 - (void)choosePanelTarget:(NSPopUpButton *)sender {
   SRCDevice *device = sender.selectedItem.representedObject;
   if (![device isKindOfClass:[SRCDevice class]]) return;
   [self setSelectedDevice:device];
-  [self refreshTargetsAllowAutoSelect:NO];
-  [self updateStatusMenuAsync];
+  [self refreshAsyncAllowAutoSelect:NO];
 }
 
-- (void)refreshTargetsAllowAutoSelect:(BOOL)allowAutoSelect {
-  NSError *error = nil;
-  NSArray<SRCDevice *> *devices = [self.controller listDevicesWithError:&error];
+// Discovery does blocking XPC, so it always runs off the main thread; the UI is
+// updated back on main from the single fetched device list (targets + status).
+- (void)refreshAsyncAllowAutoSelect:(BOOL)allowAutoSelect {
+  self.statusMenuItem.title = @"Status: Checking...";
+  [self updatePanelStatusAppearance:@"Status: Checking..."];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    NSError *error = nil;
+    NSArray<SRCDevice *> *devices = [self.controller listDevicesWithError:&error];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self applyTargetDevices:devices error:error allowAutoSelect:allowAutoSelect];
+      [self applyStatusFromDevices:devices error:error];
+    });
+  });
+}
+
+- (void)applyTargetDevices:(NSArray<SRCDevice *> *)devices error:(NSError *)error allowAutoSelect:(BOOL)allowAutoSelect {
   NSMenu *targetMenu = [[NSMenu alloc] initWithTitle:@"Target"];
   [targetMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Refresh Targets" action:@selector(refreshTargetsMenu:) keyEquivalent:@""]];
   if (self.targetPopup) {
@@ -890,66 +840,55 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [targetMenu addItem:[NSMenuItem separatorItem]];
   [targetMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Clear Target" action:@selector(clearSelectedTarget:) keyEquivalent:@""]];
   self.targetMenuItem.submenu = targetMenu;
-  self.mainTargetMenuItem.submenu = [targetMenu copy];
   [self updateSelectedTargetLabel];
 }
 
 - (void)refreshTargetsMenu:(id)sender {
   (void)sender;
-  [self refreshTargetsAllowAutoSelect:NO];
-  [self updateStatusMenuAsync];
+  [self refreshAsyncAllowAutoSelect:NO];
 }
 
-- (void)updateStatusMenuAsync {
-  self.statusMenuItem.title = @"Status: Checking...";
-  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-    NSString *status = [self statusText];
-    dispatch_async(dispatch_get_main_queue(), ^{
-      self.statusMenuItem.title = status;
-      self.mainStatusMenuItem.title = status;
-      [self updatePanelStatusAppearance:status];
-      [self updateStatusItemForStatus:status];
-    });
-  });
+- (void)applyStatusFromDevices:(NSArray<SRCDevice *> *)devices error:(NSError *)error {
+  NSString *status = [self statusTextForDevices:devices error:error];
+  self.statusMenuItem.title = status;
+  [self updatePanelStatusAppearance:status];
+  [self updateStatusItemForStatus:status];
 }
 
-- (NSString *)statusText {
-  if (![self hasSelectedTarget]) {
-    return @"Status: Target not configured";
-  }
-  NSError *error = nil;
-  SRCDevice *device = nil;
-  SRCStatus status = [self.controller statusForTarget:[self selectedTarget] device:&device error:&error];
-  if (error) {
-    if (error.code == SRCErrorAmbiguousTarget) return @"Status: Ambiguous target";
-    if (error.code == SRCErrorTargetNotFound) return @"Status: Target not found";
-    return [NSString stringWithFormat:@"Status: Error %@", @(error.code)];
-  }
-  return status == SRCStatusConnected ? [NSString stringWithFormat:@"Status: Connected to %@", device.name ? device.name : @"Sidecar"]
-                                      : [NSString stringWithFormat:@"Status: Disconnected from %@", device.name ? device.name : @"Sidecar"];
+// Pure: derives status from an already-fetched device list (no XPC), so it is
+// safe to call on the main thread.
+- (NSString *)statusTextForDevices:(NSArray<SRCDevice *> *)devices error:(NSError *)error {
+  if (![self hasSelectedTarget]) return @"Status: Target not configured";
+  if (error) return [NSString stringWithFormat:@"Status: Error %@", @(error.code)];
+  SRCResolveResult *result = [self.controller resolveTarget:[self selectedTarget] devices:devices];
+  if (result.ambiguous) return @"Status: Ambiguous target";
+  if (!result.target) return @"Status: Target not found";
+  NSString *name = result.target.name.length ? result.target.name : @"Sidecar";
+  return result.target.connected ? [NSString stringWithFormat:@"Status: Connected to %@", name]
+                                  : [NSString stringWithFormat:@"Status: Disconnected from %@", name];
 }
 
 - (void)reconnectNow:(id)sender {
   (void)sender;
-  [self runReconnectWithReason:@"manual menu" notify:YES];
+  [self runReconnectWithReason:@"manual menu" notify:SRNotifyAll];
 }
 
 - (void)reconnectFromHotKey {
   dispatch_async(dispatch_get_main_queue(), ^{
     [self log:[NSString stringWithFormat:@"hotkey pressed %@", [self hotKeyDisplayString]]];
-    [self runReconnectWithReason:@"global hotkey" notify:NO];
+    [self runReconnectWithReason:@"global hotkey" notify:SRNotifyFailureOnly];
   });
 }
 
-- (void)runReconnectWithReason:(NSString *)reason notify:(BOOL)notify {
+- (void)runReconnectWithReason:(NSString *)reason notify:(SRNotify)notify {
   if (self.reconnectRunning) {
     [self log:@"reconnect skipped: already running"];
     return;
   }
   if (![self hasSelectedTarget]) {
     [self log:@"reconnect refused: target not configured"];
-    if (notify) [self showAlert:@"Sidecar target not configured" informativeText:@"Choose a target from the menu first."];
-    [self updateStatusMenuAsync];
+    if (notify != SRNotifyNone) [self showAlert:@"Sidecar target not configured" informativeText:@"Choose a target first."];
+    [self refreshAsyncAllowAutoSelect:NO];
     return;
   }
 
@@ -963,8 +902,8 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
       [self log:[NSString stringWithFormat:@"already connected %@", [SidecarController logLineForDevice:device prefix:@"device"]]];
       dispatch_async(dispatch_get_main_queue(), ^{
         self.reconnectRunning = NO;
-      if (notify) [self showAlert:@"Sidecar already connected" informativeText:device.name ? device.name : @""];
-        [self updateStatusMenuAsync];
+        if (notify == SRNotifyAll) [self showAlert:@"Sidecar already connected" informativeText:device.name ? device.name : @""];
+        [self refreshAsyncAllowAutoSelect:NO];
       });
       return;
     }
@@ -976,11 +915,12 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
                device ? [SidecarController logLineForDevice:device prefix:@"device"] : @""]];
     dispatch_async(dispatch_get_main_queue(), ^{
       self.reconnectRunning = NO;
-      if (notify) {
+      BOOL announce = (notify == SRNotifyAll) || (notify == SRNotifyFailureOnly && !ok);
+      if (announce) {
         [self showAlert:ok ? @"Sidecar reconnect requested" : @"Sidecar reconnect failed"
         informativeText:ok ? (device.name ? device.name : @"") : (error.localizedDescription ? error.localizedDescription : @"Unknown error")];
       }
-      [self updateStatusMenuAsync];
+      [self refreshAsyncAllowAutoSelect:NO];
     });
   });
 }
@@ -990,7 +930,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   for (NSNumber *delay in @[@8, @15, @30]) {
     NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:delay.doubleValue repeats:NO block:^(NSTimer *t) {
       (void)t;
-      [self runReconnectWithReason:[NSString stringWithFormat:@"%@ retry +%@s", reason ? reason : @"event", delay] notify:NO];
+      [self runReconnectWithReason:[NSString stringWithFormat:@"%@ retry +%@s", reason ? reason : @"event", delay] notify:SRNotifyNone];
     }];
     [self.retryTimers addObject:timer];
   }
@@ -1052,9 +992,13 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   } else {
     [self log:enabled ? @"launch-at-login disabled" : @"launch-at-login enabled"];
   }
-  self.launchAtLoginItem.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.mainLaunchAtLoginItem.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
+  [self syncLaunchAtLoginControls];
+}
+
+- (void)syncLaunchAtLoginControls {
+  NSControlStateValue state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.launchAtLoginItem.state = state;
+  self.launchAtLoginCheckbox.state = state;
 }
 
 - (void)writeLaunchAgent:(NSError **)error {
