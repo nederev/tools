@@ -726,9 +726,9 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   if (!self.panelSelectedLabel) return;
   NSString *name = [self selectedTargetName];
   NSString *identifier = [self selectedTargetIdentifier];
-  if (name.length && identifier.length >= 8) {
-    self.panelSelectedLabel.stringValue = [NSString stringWithFormat:@"%@  %@...", name, [identifier substringToIndex:8]];
-  } else if (name.length) {
+  // Show the friendly name; the raw identifier is noise next to it. Fall back to
+  // the identifier only when there's no name.
+  if (name.length) {
     self.panelSelectedLabel.stringValue = name;
   } else if (identifier.length) {
     self.panelSelectedLabel.stringValue = [NSString stringWithFormat:@"ID %@", identifier];
