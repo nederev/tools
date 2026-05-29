@@ -8,7 +8,6 @@ static NSString *const TargetNameKey = @"targetName";
 static NSString *const TargetIdentifierKey = @"targetIdentifier";
 static NSString *const HotKeyCodeKey = @"hotKeyCode";
 static NSString *const HotKeyModifiersKey = @"hotKeyModifiers";
-static NSString *const ControlPanelFrameKey = @"controlPanelFrame";
 static NSString *const HideDockIconKey = @"hideDockIcon";
 static NSString *const LogPath = @"~/Library/Logs/SidecarReconnector.log";
 static const UInt32 HotKeySignature = 0x53524331;
@@ -17,7 +16,7 @@ static const UInt32 ReconnectHotKeyID = 1;
 @class AppDelegate;
 static AppDelegate *GlobalAppDelegate = nil;
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, NSPopoverDelegate>
 @property(nonatomic, strong) NSStatusItem *statusItem;
 @property(nonatomic, strong) NSMenu *statusMenu;
 @property(nonatomic, strong) NSMenuItem *statusMenuItem;
@@ -28,7 +27,8 @@ static AppDelegate *GlobalAppDelegate = nil;
 @property(nonatomic, strong) NSMenuItem *mainTargetMenuItem;
 @property(nonatomic, strong) NSMenuItem *mainLaunchAtLoginItem;
 @property(nonatomic, strong) NSMenuItem *mainHideDockIconItem;
-@property(nonatomic, strong) NSPanel *controlPanel;
+@property(nonatomic, strong) NSPopover *popover;
+@property(nonatomic, strong) NSDate *popoverClosedAt;
 @property(nonatomic, strong) NSView *panelStatusPill;
 @property(nonatomic, strong) NSTextField *panelStatusLabel;
 @property(nonatomic, strong) NSTextField *panelSelectedLabel;
@@ -86,8 +86,14 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [self registerNotifications];
   [self log:[NSString stringWithFormat:@"%@ app loaded", [self appTitle]]];
   [self refreshTargetsAllowAutoSelect:YES];
-  [self showControlPanel:nil];
+  // Live in the menu bar: don't pop the panel on launch — it opens on click.
   [self updateStatusMenuAsync];
+  // Hidden test hook: `open -a "Sidecar Reconnector" --args --show-panel`.
+  if ([[NSProcessInfo processInfo].arguments containsObject:@"--show-panel"]) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self showControlPanel:nil];
+    });
+  }
 }
 
 - (void)setupStatusItem {
@@ -184,7 +190,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   if (secondary) {
     [self popUpStatusMenu];
   } else {
-    [self showControlPanel:nil];
+    [self togglePopover];
   }
 }
 
@@ -548,38 +554,6 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   return [self roundedSurfaceWithFrame:frame color:[NSColor colorWithWhite:1.0 alpha:0.12] radius:0.0];
 }
 
-- (BOOL)restoreControlPanelFrame {
-  NSString *frameString = [[NSUserDefaults standardUserDefaults] stringForKey:ControlPanelFrameKey];
-  if (!frameString.length) return NO;
-
-  NSRect frame = NSRectFromString(frameString);
-  if (NSIsEmptyRect(frame)) return NO;
-
-  for (NSScreen *screen in [NSScreen screens]) {
-    if (NSIntersectsRect(screen.visibleFrame, frame)) {
-      [self.controlPanel setFrame:frame display:NO];
-      [self log:[NSString stringWithFormat:@"control panel frame restored %@", frameString]];
-      return YES;
-    }
-  }
-
-  return NO;
-}
-
-- (void)saveControlPanelFrame {
-  if (!self.controlPanel) return;
-
-  NSString *frameString = NSStringFromRect(self.controlPanel.frame);
-  [[NSUserDefaults standardUserDefaults] setObject:frameString forKey:ControlPanelFrameKey];
-  [self log:[NSString stringWithFormat:@"control panel frame saved %@", frameString]];
-}
-
-- (void)windowDidMove:(NSNotification *)notification {
-  if (notification.object == self.controlPanel) {
-    [self saveControlPanelFrame];
-  }
-}
-
 - (void)updatePanelStatusAppearance:(NSString *)status {
   if (!self.panelStatusLabel) return;
 
@@ -609,24 +583,11 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   self.panelStatusPill.layer.backgroundColor = background.CGColor;
 }
 
-- (void)showControlPanel:(id)sender {
-  (void)sender;
-  BOOL createdPanel = NO;
-  if (!self.controlPanel) {
-    NSRect frame = NSMakeRect(0, 0, 500, 236);
-    self.controlPanel = [[NSPanel alloc] initWithContentRect:frame
-                                                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
-                                                     backing:NSBackingStoreBuffered
-                                                       defer:NO];
-    createdPanel = YES;
-    self.controlPanel.title = [self appTitle];
-    self.controlPanel.releasedWhenClosed = NO;
-    self.controlPanel.hidesOnDeactivate = NO;
-    self.controlPanel.level = NSNormalWindowLevel;
-    self.controlPanel.collectionBehavior = NSWindowCollectionBehaviorManaged;
-    self.controlPanel.delegate = self;
+- (void)ensurePopover {
+  if (self.popover) return;
 
-    NSView *content = self.controlPanel.contentView;
+  NSView *content = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 500, 236)];
+  {
     content.wantsLayer = YES;
     content.layer.backgroundColor = [NSColor colorWithRed:0.08 green:0.09 blue:0.10 alpha:1.0].CGColor;
 
@@ -770,22 +731,59 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     [content addSubview:quitButton];
   }
 
-  if (createdPanel && ![self restoreControlPanelFrame]) {
-    NSScreen *screen = [NSScreen mainScreen] ? [NSScreen mainScreen] : [NSScreen screens].firstObject;
-    NSRect visible = screen.visibleFrame;
-    NSRect frame = self.controlPanel.frame;
-    frame.origin.x = NSMidX(visible) - NSWidth(frame) / 2.0;
-    frame.origin.y = NSMaxY(visible) - NSHeight(frame) - 80.0;
-    [self.controlPanel setFrame:frame display:YES];
-    [self saveControlPanelFrame];
-  }
-  [self.controlPanel makeKeyAndOrderFront:nil];
-  [NSApp activateIgnoringOtherApps:YES];
+  NSViewController *panelVC = [[NSViewController alloc] init];
+  panelVC.view = content;
+
+  self.popover = [[NSPopover alloc] init];
+  self.popover.contentViewController = panelVC;
+  self.popover.contentSize = NSMakeSize(500, 236);
+  self.popover.behavior = NSPopoverBehaviorTransient;  // auto-dismiss on outside click
+  self.popover.animates = YES;
+  self.popover.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+  self.popover.delegate = self;
+}
+
+- (void)popoverDidClose:(NSNotification *)notification {
+  (void)notification;
+  self.popoverClosedAt = [NSDate date];
+}
+
+// Opens the panel as a popover hanging off the menu-bar item (Rectangle-style).
+- (void)showControlPanel:(id)sender {
+  (void)sender;
+  [self ensurePopover];
   [self updateSelectedTargetLabel];
   [self refreshTargetsAllowAutoSelect:NO];
   self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
   [self syncHideDockIconControls];
-  [self log:@"control panel shown"];
+  [self updateStatusMenuAsync];
+
+  NSStatusBarButton *button = self.statusItem.button;
+  if (button && !self.popover.isShown) {
+    self.statusItem.visible = YES;
+    [self.popover showRelativeToRect:button.bounds ofView:button preferredEdge:NSRectEdgeMinY];
+  }
+  // Accessory apps need an explicit activate so the popover takes key focus
+  // (text fields, hotkey recording, button clicks).
+  [NSApp activateIgnoringOtherApps:YES];
+  [self log:@"control panel shown (popover)"];
+}
+
+- (void)togglePopover {
+  [self ensurePopover];
+  if (self.popover.isShown) {
+    [self.popover performClose:nil];
+    [self log:@"control panel closed (popover)"];
+    return;
+  }
+  // Clicking the icon while the popover is open first triggers the transient
+  // auto-dismiss (popoverDidClose), then this action. Without this guard we'd
+  // immediately re-open it. Treat a click within 250ms of a close as "just
+  // close it" and don't re-open.
+  if (self.popoverClosedAt && [[NSDate date] timeIntervalSinceDate:self.popoverClosedAt] < 0.25) {
+    return;
+  }
+  [self showControlPanel:nil];
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
@@ -797,7 +795,6 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
   (void)notification;
-  [self saveControlPanelFrame];
   if (self.reconnectHotKeyRef) {
     UnregisterEventHotKey(self.reconnectHotKeyRef);
     self.reconnectHotKeyRef = NULL;
@@ -962,7 +959,6 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 - (void)reconnectFromHotKey {
   dispatch_async(dispatch_get_main_queue(), ^{
     [self log:[NSString stringWithFormat:@"hotkey pressed %@", [self hotKeyDisplayString]]];
-    [self showControlPanel:nil];
     [self runReconnectWithReason:@"global hotkey" notify:NO];
   });
 }
@@ -1109,13 +1105,11 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [self log:[NSString stringWithFormat:@"hide-dock-icon %@", hide ? @"enabled (menu-bar only)" : @"disabled (Dock + menu bar)"]];
   [self syncHideDockIconControls];
 
-  // Re-show the panel and re-assert the status item: switching activation
-  // policy can drop key focus and, on some macOS versions, the status item, so
-  // bring the UI back to a known-good state.
-  if (!hide) {
-    [NSApp activateIgnoringOtherApps:YES];
-  }
-  [self.controlPanel makeKeyAndOrderFront:nil];
+  // Switching activation policy dismisses the transient popover and drops key
+  // focus; re-open it on the next tick so the user stays in the panel.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self showControlPanel:nil];
+  });
 }
 
 - (void)writeLaunchAgent:(NSError **)error {

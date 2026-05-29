@@ -42,32 +42,35 @@ Install, launch, and run the health check in one command:
 make install-app-health
 ```
 
-Launch `~/Applications/Sidecar Reconnector.app`. The app opens a compact
-native control panel, appears in the Dock while running, and also exposes a
-menu-bar item named `Sidecar`.
+Launch `~/Applications/Sidecar Reconnector.app`. It lives in the menu bar as a
+small display icon (no Dock icon by default). **Left-click** the icon to open a
+compact control panel as a popover anchored under the menu bar; it dismisses
+when you click away. **Right-click** (or control-click) the icon for a menu with
+the same actions.
 
-The app title includes the bundle short version, for example:
-
-```text
-Sidecar Reconnector v0.15
-```
-
-The control panel includes:
+The control panel popover includes:
 
 - current Sidecar target and connection status
 - compact reconnect button
 - target iPad selector from discovered Sidecar devices
 - refresh targets button
 - configurable global reconnect hotkey
-- `Launch at login` checkbox
+- `Launch at login` and `Hide Dock icon` checkboxes
 - open log and quit buttons
 
-The menu bar item includes the same core actions: status, reconnect now,
-target selection, launch-at-login toggle, open log, and quit.
+The right-click menu includes the same core actions: status, reconnect now,
+target selection, launch-at-login toggle, hide-dock-icon toggle, show control
+panel, open log, and quit.
+
+### Dock icon
+
+By default the app runs only in the menu bar. Uncheck **Hide Dock icon** (in the
+popover or the menu) to also show it in the Dock; re-check it to go back to
+menu-bar-only. The change applies immediately.
 
 On first launch, if exactly one display-capable Sidecar device is
 discoverable, the app selects it automatically. If multiple devices are
-discoverable, choose the target from the menu before reconnecting.
+discoverable, choose the target from the popover before reconnecting.
 
 Logs are written to:
 

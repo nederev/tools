@@ -58,6 +58,11 @@ Menu-bar app / Dock behavior:
   switches to `NSApplicationActivationPolicyRegular` (Dock + menu bar) live.
 - `LSUIElement` is `true` so the default menu-bar-only launch has no Dock
   flash; the policy is still asserted in code so it can toggle at runtime.
+- The control panel is an `NSPopover` (transient) anchored under the status
+  item: left-click toggles it, right-click shows the menu. A `popoverDidClose`
+  timestamp + 250ms guard in `togglePopover` avoids the click-to-open /
+  transient-dismiss race. It does not auto-open on launch. Hidden test hook:
+  `open -a "Sidecar Reconnector" --args --show-panel`.
 - Notch gotcha (verified on a notched MacBook Air): a freshly added
   `NSStatusItem` on a full menu bar gets parked under the notch and is
   invisible even though `visible == YES` and it has a valid window frame.
