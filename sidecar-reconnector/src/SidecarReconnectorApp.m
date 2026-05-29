@@ -564,7 +564,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
                                                   radius:4.0];
     [content addSubview:self.panelStatusPill];
 
-    self.panelStatusLabel = [self labelWithFrame:NSMakeRect(102, 169, 160, 16)
+    self.panelStatusLabel = [self labelWithFrame:NSMakeRect(98, 169, 164, 16)
                                             text:@"Checking"
                                             font:[NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
                                            color:[NSColor colorWithWhite:0.82 alpha:1.0]];
