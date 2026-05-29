@@ -455,12 +455,14 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 
 - (void)showControlPanel:(id)sender {
   (void)sender;
+  BOOL createdPanel = NO;
   if (!self.controlPanel) {
     NSRect frame = NSMakeRect(0, 0, 500, 236);
     self.controlPanel = [[NSPanel alloc] initWithContentRect:frame
                                                    styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                                                      backing:NSBackingStoreBuffered
                                                        defer:NO];
+    createdPanel = YES;
     self.controlPanel.title = [self appTitle];
     self.controlPanel.releasedWhenClosed = NO;
     self.controlPanel.hidesOnDeactivate = NO;
@@ -601,12 +603,14 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     [content addSubview:quitButton];
   }
 
-  NSScreen *screen = [NSScreen mainScreen] ? [NSScreen mainScreen] : [NSScreen screens].firstObject;
-  NSRect visible = screen.visibleFrame;
-  NSRect frame = self.controlPanel.frame;
-  frame.origin.x = NSMidX(visible) - NSWidth(frame) / 2.0;
-  frame.origin.y = NSMaxY(visible) - NSHeight(frame) - 80.0;
-  [self.controlPanel setFrame:frame display:YES];
+  if (createdPanel) {
+    NSScreen *screen = [NSScreen mainScreen] ? [NSScreen mainScreen] : [NSScreen screens].firstObject;
+    NSRect visible = screen.visibleFrame;
+    NSRect frame = self.controlPanel.frame;
+    frame.origin.x = NSMidX(visible) - NSWidth(frame) / 2.0;
+    frame.origin.y = NSMaxY(visible) - NSHeight(frame) - 80.0;
+    [self.controlPanel setFrame:frame display:YES];
+  }
   [self.controlPanel makeKeyAndOrderFront:nil];
   [NSApp activateIgnoringOtherApps:YES];
   [self updateSelectedTargetLabel];
