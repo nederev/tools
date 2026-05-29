@@ -50,6 +50,30 @@ make -C sidecar-reconnector dmg
 make -C sidecar-reconnector app-health
 ```
 
+Menu-bar app / Dock behavior:
+
+- The app is a status-bar app. Activation policy is chosen at runtime from
+  the `hideDockIcon` preference (default: hidden → menu-bar only,
+  `NSApplicationActivationPolicyAccessory`). Unchecking "Hide Dock icon"
+  switches to `NSApplicationActivationPolicyRegular` (Dock + menu bar) live.
+- `LSUIElement` is `true` so the default menu-bar-only launch has no Dock
+  flash; the policy is still asserted in code so it can toggle at runtime.
+- Notch gotcha (verified on a notched MacBook Air): a freshly added
+  `NSStatusItem` on a full menu bar gets parked under the notch and is
+  invisible even though `visible == YES` and it has a valid window frame.
+  Fix: set `statusItem.autosaveName` and seed
+  `NSUserDefaults` key `"NSStatusItem Preferred Position <autosaveName>"`
+  to `0` (rightmost slot, next to Control Center) on first run only, so the
+  user can still Cmd-drag it afterwards. Lower position value = further right.
+- `SidecarReconnectorApp.m` logs `statusitem-diag` lines (frame, screen,
+  notch safe-area). Use them to confirm placement without a screenshot; the
+  item is hidden when its x range overlaps the notch gap (between
+  `auxiliaryTopLeftArea` and `auxiliaryTopRightArea`).
+- To verify visually, `screencapture` needs the host app (e.g. the terminal
+  or Claude) to have Screen Recording permission; `-R` region captures can
+  return black even then, so capture full-screen and crop. If a foreground
+  app is full-screen, the menu bar only renders on hover.
+
 Versioning rules:
 
 - The control-panel title is derived from
