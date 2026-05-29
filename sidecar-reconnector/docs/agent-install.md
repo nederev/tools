@@ -73,6 +73,15 @@ This installs:
 ~/Applications/Sidecar Reconnector.app
 ```
 
+For a complete install check, prefer:
+
+```sh
+make -C sidecar-reconnector install-app-health
+```
+
+That target installs the app, launches it, waits briefly, and runs
+`app-health`.
+
 Launch the app and use the `Sidecar` menu-bar item to choose the target
 iPad, or choose the target in the compact app panel. Use the `Launch at
 login` checkbox in the panel when the app should start automatically
@@ -117,6 +126,23 @@ summary:
 ```sh
 make -C sidecar-reconnector app-health
 ```
+
+## Build A Local DMG
+
+Create a simple unsigned DMG:
+
+```sh
+make -C sidecar-reconnector dmg
+```
+
+Expected result:
+
+```text
+sidecar-reconnector/build/Sidecar-Reconnector-vX.Y.dmg
+```
+
+The DMG includes the app bundle and an `Applications` shortcut. It is a
+local packaging artifact only; signing and notarization are separate.
 
 ## Discover Devices
 

@@ -3,6 +3,12 @@ BINDIR ?= $(PREFIX)/bin
 MODULEDIR ?= $(PREFIX)
 BUILD_DIR ?= build
 APPDIR ?= $(HOME)/Applications
+APP_NAME := Sidecar Reconnector
+APP_VERSION := $(shell /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" app/Info.plist 2>/dev/null || echo dev)
+APP_BUNDLE_PATH := $(BUILD_DIR)/$(APP_NAME).app
+INSTALLED_APP := $(APPDIR)/$(APP_NAME).app
+DMG_STAGING := $(BUILD_DIR)/dmg
+DMG := $(BUILD_DIR)/Sidecar-Reconnector-v$(APP_VERSION).dmg
 
 CC ?= clang
 CFLAGS ?= -fobjc-arc -fblocks -Wall -Wextra -Wpedantic
@@ -23,7 +29,7 @@ APP_SRC := src/SidecarReconnectorApp.m
 VERSION ?=
 BUILD ?=
 
-.PHONY: all clean install install-app install-hammerspoon reload test bump-version bump-build release-build app-health
+.PHONY: all clean install install-app install-app-health launch-app install-hammerspoon reload test bump-version bump-build release-build dmg app-health
 
 all: $(BIN) $(APP_BUNDLE)
 
@@ -51,8 +57,18 @@ install: all install-hammerspoon
 
 install-app: all
 	mkdir -p "$(APPDIR)"
-	rm -rf "$(APPDIR)/Sidecar Reconnector.app"
-	cp -R "$(BUILD_DIR)/Sidecar Reconnector.app" "$(APPDIR)/Sidecar Reconnector.app"
+	-osascript -e 'tell application "$(APP_NAME)" to quit' >/dev/null 2>&1
+	rm -rf "$(INSTALLED_APP)"
+	cp -R "$(APP_BUNDLE_PATH)" "$(INSTALLED_APP)"
+	@echo "Installed $(INSTALLED_APP)"
+
+launch-app:
+	open "$(INSTALLED_APP)"
+
+install-app-health: install-app
+	$(MAKE) launch-app
+	sleep 1
+	$(MAKE) app-health
 
 install-hammerspoon:
 	mkdir -p $(MODULEDIR)
@@ -79,6 +95,14 @@ bump-build:
 	@scripts/bump-version.sh
 
 release-build: bump-version clean all
+
+dmg: all
+	rm -rf "$(DMG_STAGING)" "$(DMG)"
+	mkdir -p "$(DMG_STAGING)"
+	cp -R "$(APP_BUNDLE_PATH)" "$(DMG_STAGING)/$(APP_NAME).app"
+	ln -s /Applications "$(DMG_STAGING)/Applications"
+	hdiutil create -volname "$(APP_NAME) v$(APP_VERSION)" -srcfolder "$(DMG_STAGING)" -ov -format UDZO "$(DMG)"
+	@echo "Created $(DMG)"
 
 app-health:
 	@scripts/app-health.sh

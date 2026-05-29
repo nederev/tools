@@ -36,6 +36,12 @@ make -C sidecar-reconnector bump-version VERSION=0.2 BUILD=7
 # Bump version, clean, and rebuild in one command.
 make -C sidecar-reconnector release-build VERSION=0.2
 
+# Install app, launch it, then run the health check.
+make -C sidecar-reconnector install-app-health
+
+# Create a simple unsigned DMG under build/.
+make -C sidecar-reconnector dmg
+
 # Inspect installed app path/version, process state, LaunchAgent, log,
 # hotkey registration evidence, and target preference.
 make -C sidecar-reconnector app-health
@@ -58,6 +64,11 @@ Release/install rules:
   does not install into `~/Applications`.
 - For a user machine install, use `make -C sidecar-reconnector install-app`
   when permissions allow it.
+- For a complete local install verification, use
+  `make -C sidecar-reconnector install-app-health`; it installs the app,
+  launches it, waits briefly, and then runs `app-health`.
+- For a shareable local artifact before signing/notarization, use
+  `make -C sidecar-reconnector dmg`; the resulting DMG is unsigned.
 - If sandbox permissions block `install-app`, give the user the manual
   terminal install command instead of trying unsafe workarounds.
 - After install, run `make -C sidecar-reconnector app-health`.
@@ -75,8 +86,7 @@ For a user machine install, the expected flow is:
 
 ```sh
 make -C sidecar-reconnector clean all
-make -C sidecar-reconnector install-app
-make -C sidecar-reconnector app-health
+make -C sidecar-reconnector install-app-health
 ```
 
 Launch `~/Applications/Sidecar Reconnector.app`, choose the Sidecar

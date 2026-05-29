@@ -36,6 +36,12 @@ Install the app into `~/Applications`:
 make install-app
 ```
 
+Install, launch, and run the health check in one command:
+
+```sh
+make install-app-health
+```
+
 Launch `~/Applications/Sidecar Reconnector.app`. The app opens a compact
 native control panel, appears in the Dock while running, and also exposes a
 menu-bar item named `Sidecar`.
@@ -110,6 +116,24 @@ For a one-command versioned build:
 ```sh
 make release-build VERSION=0.2
 ```
+
+## DMG Package
+
+Create a simple unsigned DMG for local sharing or manual install:
+
+```sh
+make dmg
+```
+
+This produces:
+
+```text
+build/Sidecar-Reconnector-vX.Y.dmg
+```
+
+The DMG contains `Sidecar Reconnector.app` and an `Applications` shortcut.
+It is not signed or notarized yet, so macOS may still show Gatekeeper
+warnings on other machines.
 
 ## Health Check
 
