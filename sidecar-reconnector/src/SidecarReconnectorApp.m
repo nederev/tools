@@ -8,6 +8,7 @@ static NSString *const TargetNameKey = @"targetName";
 static NSString *const TargetIdentifierKey = @"targetIdentifier";
 static NSString *const HotKeyCodeKey = @"hotKeyCode";
 static NSString *const HotKeyModifiersKey = @"hotKeyModifiers";
+static NSString *const ControlPanelFrameKey = @"controlPanelFrame";
 static NSString *const LogPath = @"~/Library/Logs/SidecarReconnector.log";
 static const UInt32 HotKeySignature = 0x53524331;
 static const UInt32 ReconnectHotKeyID = 1;
@@ -15,7 +16,7 @@ static const UInt32 ReconnectHotKeyID = 1;
 @class AppDelegate;
 static AppDelegate *GlobalAppDelegate = nil;
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate>
 @property(nonatomic, strong) NSStatusItem *statusItem;
 @property(nonatomic, strong) NSMenuItem *statusMenuItem;
 @property(nonatomic, strong) NSMenuItem *targetMenuItem;
@@ -424,6 +425,38 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   return [self roundedSurfaceWithFrame:frame color:[NSColor colorWithWhite:1.0 alpha:0.12] radius:0.0];
 }
 
+- (BOOL)restoreControlPanelFrame {
+  NSString *frameString = [[NSUserDefaults standardUserDefaults] stringForKey:ControlPanelFrameKey];
+  if (!frameString.length) return NO;
+
+  NSRect frame = NSRectFromString(frameString);
+  if (NSIsEmptyRect(frame)) return NO;
+
+  for (NSScreen *screen in [NSScreen screens]) {
+    if (NSIntersectsRect(screen.visibleFrame, frame)) {
+      [self.controlPanel setFrame:frame display:NO];
+      [self log:[NSString stringWithFormat:@"control panel frame restored %@", frameString]];
+      return YES;
+    }
+  }
+
+  return NO;
+}
+
+- (void)saveControlPanelFrame {
+  if (!self.controlPanel) return;
+
+  NSString *frameString = NSStringFromRect(self.controlPanel.frame);
+  [[NSUserDefaults standardUserDefaults] setObject:frameString forKey:ControlPanelFrameKey];
+  [self log:[NSString stringWithFormat:@"control panel frame saved %@", frameString]];
+}
+
+- (void)windowDidMove:(NSNotification *)notification {
+  if (notification.object == self.controlPanel) {
+    [self saveControlPanelFrame];
+  }
+}
+
 - (void)updatePanelStatusAppearance:(NSString *)status {
   if (!self.panelStatusLabel) return;
 
@@ -468,6 +501,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     self.controlPanel.hidesOnDeactivate = NO;
     self.controlPanel.level = NSNormalWindowLevel;
     self.controlPanel.collectionBehavior = NSWindowCollectionBehaviorManaged;
+    self.controlPanel.delegate = self;
 
     NSView *content = self.controlPanel.contentView;
     content.wantsLayer = YES;
@@ -603,13 +637,14 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     [content addSubview:quitButton];
   }
 
-  if (createdPanel) {
+  if (createdPanel && ![self restoreControlPanelFrame]) {
     NSScreen *screen = [NSScreen mainScreen] ? [NSScreen mainScreen] : [NSScreen screens].firstObject;
     NSRect visible = screen.visibleFrame;
     NSRect frame = self.controlPanel.frame;
     frame.origin.x = NSMidX(visible) - NSWidth(frame) / 2.0;
     frame.origin.y = NSMaxY(visible) - NSHeight(frame) - 80.0;
     [self.controlPanel setFrame:frame display:YES];
+    [self saveControlPanelFrame];
   }
   [self.controlPanel makeKeyAndOrderFront:nil];
   [NSApp activateIgnoringOtherApps:YES];
@@ -628,6 +663,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
   (void)notification;
+  [self saveControlPanelFrame];
   if (self.reconnectHotKeyRef) {
     UnregisterEventHotKey(self.reconnectHotKeyRef);
     self.reconnectHotKeyRef = NULL;
