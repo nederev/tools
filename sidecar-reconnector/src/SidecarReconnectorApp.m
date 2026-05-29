@@ -8,7 +8,6 @@ static NSString *const TargetNameKey = @"targetName";
 static NSString *const TargetIdentifierKey = @"targetIdentifier";
 static NSString *const HotKeyCodeKey = @"hotKeyCode";
 static NSString *const HotKeyModifiersKey = @"hotKeyModifiers";
-static NSString *const HideDockIconKey = @"hideDockIcon";
 static NSString *const LogPath = @"~/Library/Logs/SidecarReconnector.log";
 static const UInt32 HotKeySignature = 0x53524331;
 static const UInt32 ReconnectHotKeyID = 1;
@@ -22,11 +21,9 @@ static AppDelegate *GlobalAppDelegate = nil;
 @property(nonatomic, strong) NSMenuItem *statusMenuItem;
 @property(nonatomic, strong) NSMenuItem *targetMenuItem;
 @property(nonatomic, strong) NSMenuItem *launchAtLoginItem;
-@property(nonatomic, strong) NSMenuItem *hideDockIconItem;
 @property(nonatomic, strong) NSMenuItem *mainStatusMenuItem;
 @property(nonatomic, strong) NSMenuItem *mainTargetMenuItem;
 @property(nonatomic, strong) NSMenuItem *mainLaunchAtLoginItem;
-@property(nonatomic, strong) NSMenuItem *mainHideDockIconItem;
 @property(nonatomic, strong) NSPopover *popover;
 @property(nonatomic, strong) NSDate *popoverClosedAt;
 @property(nonatomic, strong) NSView *panelStatusPill;
@@ -36,7 +33,6 @@ static AppDelegate *GlobalAppDelegate = nil;
 @property(nonatomic, strong) NSPopUpButton *targetPopup;
 @property(nonatomic, strong) NSButton *recordHotKeyButton;
 @property(nonatomic, strong) NSButton *launchAtLoginCheckbox;
-@property(nonatomic, strong) NSButton *hideDockIconCheckbox;
 @property(nonatomic, strong) SidecarController *controller;
 @property(nonatomic, strong) NSMutableArray<NSTimer *> *retryTimers;
 @property(nonatomic, strong) id localKeyMonitor;
@@ -68,10 +64,10 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
   (void)notification;
   GlobalAppDelegate = self;
-  // Dock vs menu-bar-only is driven by the hideDockIcon preference (default:
-  // hidden). LSUIElement keeps the default launch Dock-free; this applies the
-  // user's actual choice and lets it toggle live.
-  [self applyActivationPolicy];
+  // Menu-bar-only app: the control panel is a popover off the status item, so a
+  // Dock icon adds nothing. LSUIElement already does this at launch; assert it
+  // here too in case the bundle plist is ever out of sync.
+  [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
   NSString *iconPath = [[NSBundle mainBundle] pathForResource:@"SidecarReconnectorIcon" ofType:@"png"];
   NSImage *iconImage = iconPath.length ? [[NSImage alloc] initWithContentsOfFile:iconPath] : nil;
   if (iconImage != nil) {
@@ -161,9 +157,6 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 
   self.launchAtLoginItem = [[NSMenuItem alloc] initWithTitle:@"Launch at Login" action:@selector(toggleLaunchAtLogin:) keyEquivalent:@""];
   [menu addItem:self.launchAtLoginItem];
-
-  self.hideDockIconItem = [[NSMenuItem alloc] initWithTitle:@"Hide Dock Icon" action:@selector(toggleHideDockIcon:) keyEquivalent:@""];
-  [menu addItem:self.hideDockIconItem];
 
   [menu addItem:[NSMenuItem separatorItem]];
   [menu addItem:[[NSMenuItem alloc] initWithTitle:@"Show Control Panel" action:@selector(showControlPanel:) keyEquivalent:@"p"]];
@@ -267,9 +260,6 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 
   self.mainLaunchAtLoginItem = [[NSMenuItem alloc] initWithTitle:@"Launch at Login" action:@selector(toggleLaunchAtLogin:) keyEquivalent:@""];
   [sidecarMenu addItem:self.mainLaunchAtLoginItem];
-
-  self.mainHideDockIconItem = [[NSMenuItem alloc] initWithTitle:@"Hide Dock Icon" action:@selector(toggleHideDockIcon:) keyEquivalent:@""];
-  [sidecarMenu addItem:self.mainHideDockIconItem];
   [sidecarMenu addItem:[NSMenuItem separatorItem]];
   [sidecarMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Open Log" action:@selector(openLog:) keyEquivalent:@"l"]];
 
@@ -293,7 +283,6 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   self.launchAtLoginItem.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
   self.mainLaunchAtLoginItem.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
   self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
-  [self syncHideDockIconControls];
 }
 
 - (NSString *)expandedLogPath {
@@ -696,7 +685,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 
     [content addSubview:[self separatorWithFrame:NSMakeRect(0, 36, 500, 1)]];
 
-    self.launchAtLoginCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(left, 7, 150, 24)];
+    self.launchAtLoginCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(left, 7, 200, 24)];
     self.launchAtLoginCheckbox.buttonType = NSButtonTypeSwitch;
     self.launchAtLoginCheckbox.title = @"Launch at login";
     self.launchAtLoginCheckbox.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium];
@@ -705,16 +694,6 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
     self.launchAtLoginCheckbox.toolTip = @"Start Sidecar Reconnector when you log in";
     [content addSubview:self.launchAtLoginCheckbox];
-
-    self.hideDockIconCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(176, 7, 124, 24)];
-    self.hideDockIconCheckbox.buttonType = NSButtonTypeSwitch;
-    self.hideDockIconCheckbox.title = @"Hide Dock icon";
-    self.hideDockIconCheckbox.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium];
-    self.hideDockIconCheckbox.target = self;
-    self.hideDockIconCheckbox.action = @selector(toggleHideDockIcon:);
-    self.hideDockIconCheckbox.state = [self hideDockIcon] ? NSControlStateValueOn : NSControlStateValueOff;
-    self.hideDockIconCheckbox.toolTip = @"Run only in the menu bar (no Dock icon)";
-    [content addSubview:self.hideDockIconCheckbox];
 
     NSButton *logButton = [self buttonWithTitle:@"Open Log"
                                           frame:NSMakeRect(304, 8, 82, 24)
@@ -755,7 +734,6 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [self updateSelectedTargetLabel];
   [self refreshTargetsAllowAutoSelect:NO];
   self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
-  [self syncHideDockIconControls];
   [self updateStatusMenuAsync];
 
   NSStatusBarButton *button = self.statusItem.button;
@@ -1077,39 +1055,6 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   self.launchAtLoginItem.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
   self.mainLaunchAtLoginItem.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
   self.launchAtLoginCheckbox.state = [self launchAtLoginEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
-}
-
-- (BOOL)hideDockIcon {
-  id value = [[NSUserDefaults standardUserDefaults] objectForKey:HideDockIconKey];
-  return value ? [value boolValue] : YES;  // default: menu-bar only, no Dock icon
-}
-
-- (void)applyActivationPolicy {
-  NSApplicationActivationPolicy policy = [self hideDockIcon] ? NSApplicationActivationPolicyAccessory
-                                                            : NSApplicationActivationPolicyRegular;
-  [NSApp setActivationPolicy:policy];
-}
-
-- (void)syncHideDockIconControls {
-  NSControlStateValue state = [self hideDockIcon] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.hideDockIconItem.state = state;
-  self.mainHideDockIconItem.state = state;
-  self.hideDockIconCheckbox.state = state;
-}
-
-- (void)toggleHideDockIcon:(id)sender {
-  (void)sender;
-  BOOL hide = ![self hideDockIcon];
-  [[NSUserDefaults standardUserDefaults] setBool:hide forKey:HideDockIconKey];
-  [self applyActivationPolicy];
-  [self log:[NSString stringWithFormat:@"hide-dock-icon %@", hide ? @"enabled (menu-bar only)" : @"disabled (Dock + menu bar)"]];
-  [self syncHideDockIconControls];
-
-  // Switching activation policy dismisses the transient popover and drops key
-  // focus; re-open it on the next tick so the user stays in the panel.
-  dispatch_async(dispatch_get_main_queue(), ^{
-    [self showControlPanel:nil];
-  });
 }
 
 - (void)writeLaunchAgent:(NSError **)error {

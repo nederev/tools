@@ -52,12 +52,10 @@ make -C sidecar-reconnector app-health
 
 Menu-bar app / Dock behavior:
 
-- The app is a status-bar app. Activation policy is chosen at runtime from
-  the `hideDockIcon` preference (default: hidden → menu-bar only,
-  `NSApplicationActivationPolicyAccessory`). Unchecking "Hide Dock icon"
-  switches to `NSApplicationActivationPolicyRegular` (Dock + menu bar) live.
-- `LSUIElement` is `true` so the default menu-bar-only launch has no Dock
-  flash; the policy is still asserted in code so it can toggle at runtime.
+- The app is a menu-bar-only ("agent") app: `LSUIElement` is `true` and the
+  code asserts `NSApplicationActivationPolicyAccessory` at launch. There is no
+  Dock icon and no Dock toggle — the control panel is a popover off the status
+  item, so a Dock presence would add nothing.
 - The control panel is an `NSPopover` (transient) anchored under the status
   item: left-click toggles it, right-click shows the menu. A `popoverDidClose`
   timestamp + 250ms guard in `togglePopover` avoids the click-to-open /
