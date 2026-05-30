@@ -8,6 +8,7 @@ static NSString *const TargetNameKey = @"targetName";
 static NSString *const TargetIdentifierKey = @"targetIdentifier";
 static NSString *const HotKeyCodeKey = @"hotKeyCode";
 static NSString *const HotKeyModifiersKey = @"hotKeyModifiers";
+static NSString *const PausedKey = @"paused";
 static NSString *const LogPath = @"~/Library/Logs/SidecarReconnector.log";
 static const UInt32 HotKeySignature = 0x53524331;
 static const UInt32 ReconnectHotKeyID = 1;
@@ -28,6 +29,7 @@ typedef NS_ENUM(NSInteger, SRPanelStatusKind) {
   SRPanelStatusChecking,
   SRPanelStatusConnected,
   SRPanelStatusDisconnected,
+  SRPanelStatusPaused,     // auto-reconnect suspended by the user
   SRPanelStatusAttention,  // not configured / not found / ambiguous / error
 };
 
@@ -40,6 +42,7 @@ static AppDelegate *GlobalAppDelegate = nil;
 @property(nonatomic, strong) NSMenuItem *statusMenuItem;
 @property(nonatomic, strong) NSMenuItem *targetMenuItem;
 @property(nonatomic, strong) NSMenuItem *launchAtLoginItem;
+@property(nonatomic, strong) NSMenuItem *pauseMenuItem;
 @property(nonatomic, strong) NSPopover *popover;
 @property(nonatomic, strong) NSDate *popoverClosedAt;
 @property(nonatomic, strong) NSView *panelStatusPill;
@@ -49,6 +52,7 @@ static AppDelegate *GlobalAppDelegate = nil;
 @property(nonatomic, strong) NSPopUpButton *targetPopup;
 @property(nonatomic, strong) NSButton *recordHotKeyButton;
 @property(nonatomic, strong) NSButton *launchAtLoginCheckbox;
+@property(nonatomic, strong) NSSwitch *pauseSwitch;
 @property(nonatomic, strong) SidecarController *controller;
 @property(nonatomic, strong) NSMutableArray<NSTimer *> *retryTimers;
 @property(nonatomic, strong) id localKeyMonitor;
@@ -156,6 +160,10 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 
   [menu addItem:[[NSMenuItem alloc] initWithTitle:@"Reconnect Now" action:@selector(reconnectNow:) keyEquivalent:@"r"]];
 
+  // Checkmark when paused; one click here pauses without opening the panel.
+  self.pauseMenuItem = [[NSMenuItem alloc] initWithTitle:@"Pause" action:@selector(togglePause:) keyEquivalent:@""];
+  [menu addItem:self.pauseMenuItem];
+
   self.targetMenuItem = [[NSMenuItem alloc] initWithTitle:@"Target" action:nil keyEquivalent:@""];
   self.targetMenuItem.submenu = [[NSMenu alloc] initWithTitle:@"Target"];
   [menu addItem:self.targetMenuItem];
@@ -197,6 +205,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 - (SRPanelStatusKind)statusKindForText:(NSString *)status {
   // Check "Disconnected" before "Connected": the word "disconnected" contains
   // the substring "connected".
+  if ([status localizedCaseInsensitiveContainsString:@"Paused"]) return SRPanelStatusPaused;
   if ([status localizedCaseInsensitiveContainsString:@"Checking"]) return SRPanelStatusChecking;
   if ([status localizedCaseInsensitiveContainsString:@"Disconnected"]) return SRPanelStatusDisconnected;
   if ([status localizedCaseInsensitiveContainsString:@"Connected"]) return SRPanelStatusConnected;
@@ -207,6 +216,8 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   NSStatusBarButton *button = self.statusItem.button;
   button.toolTip = status.length ? status : [self appTitle];
   SRPanelStatusKind kind = [self statusKindForText:status];
+  // Paused: dim the glyph so the menu bar shows the app is dormant (and no red).
+  button.alphaValue = (kind == SRPanelStatusPaused) ? 0.45 : 1.0;
   button.contentTintColor = (kind == SRPanelStatusDisconnected || kind == SRPanelStatusAttention)
                                 ? [NSColor systemRedColor]
                                 : nil;
@@ -224,6 +235,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   (void)menu;
   [self refreshAsyncAllowAutoSelect:NO];
   [self syncLaunchAtLoginControls];
+  [self syncPauseControls];
 }
 
 - (NSString *)expandedLogPath {
@@ -502,6 +514,10 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
       label = @"Checking";
       background = [NSColor colorWithRed:0.36 green:0.54 blue:0.88 alpha:1.0];
       break;
+    case SRPanelStatusPaused:
+      label = @"Paused";
+      background = [NSColor colorWithRed:0.85 green:0.62 blue:0.20 alpha:1.0];
+      break;
     case SRPanelStatusAttention:
       label = @"Needs attention";
       background = [NSColor colorWithRed:0.36 green:0.27 blue:0.11 alpha:1.0];
@@ -553,7 +569,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
                                         borderColor:iconStroke
                                         borderWidth:1.4]];
 
-    self.panelSelectedLabel = [self labelWithFrame:NSMakeRect(86, 187, 350, 20)
+    self.panelSelectedLabel = [self labelWithFrame:NSMakeRect(86, 187, 248, 20)
                                              text:@"Selected: none"
                                              font:[NSFont systemFontOfSize:15.0 weight:NSFontWeightBold]
                                             color:[NSColor colorWithWhite:0.94 alpha:1.0]];
@@ -578,6 +594,20 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     [self setButton:reconnect title:@"↻" font:[NSFont systemFontOfSize:17.0 weight:NSFontWeightSemibold] color:[NSColor whiteColor]];
     reconnect.toolTip = @"Reconnect Now";
     [content addSubview:reconnect];
+
+    // Master Pause toggle: suspends automatic reconnects (manual still works).
+    NSTextField *pauseLabel = [self labelWithFrame:NSMakeRect(338, 169, 52, 16)
+                                              text:@"Pause"
+                                              font:[NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
+                                             color:[NSColor colorWithWhite:0.74 alpha:1.0]];
+    pauseLabel.alignment = NSTextAlignmentRight;
+    [content addSubview:pauseLabel];
+
+    self.pauseSwitch = [[NSSwitch alloc] initWithFrame:NSMakeRect(396, 167, 38, 22)];
+    self.pauseSwitch.target = self;
+    self.pauseSwitch.action = @selector(togglePause:);
+    self.pauseSwitch.toolTip = @"Pause auto-reconnect (app keeps running)";
+    [content addSubview:self.pauseSwitch];
 
     [content addSubview:[self separatorWithFrame:NSMakeRect(left, 148, 456, 1)]];
 
@@ -682,6 +712,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [self ensurePopover];
   [self updateSelectedTargetLabel];
   [self syncLaunchAtLoginControls];
+  [self syncPauseControls];
   [self refreshAsyncAllowAutoSelect:NO];
 
   NSStatusBarButton *button = self.statusItem.button;
@@ -857,7 +888,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 }
 
 - (void)applyStatusFromDevices:(NSArray<SRCDevice *> *)devices error:(NSError *)error {
-  NSString *status = [self statusTextForDevices:devices error:error];
+  NSString *status = [self isPaused] ? @"Status: Paused" : [self statusTextForDevices:devices error:error];
   self.statusMenuItem.title = status;
   [self updatePanelStatusAppearance:status];
   [self updateStatusItemForStatus:status];
@@ -934,6 +965,10 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 }
 
 - (void)scheduleRetriesForReason:(NSString *)reason {
+  if ([self isPaused]) {
+    [self log:[NSString stringWithFormat:@"auto-reconnect skipped (paused) reason=%@", reason ? reason : @""]];
+    return;
+  }
   [self stopRetryTimers];
   for (NSNumber *delay in @[@8, @15, @30]) {
     NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:delay.doubleValue repeats:NO block:^(NSTimer *t) {
@@ -950,6 +985,28 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     [timer invalidate];
   }
   [self.retryTimers removeAllObjects];
+}
+
+- (BOOL)isPaused {
+  return [[NSUserDefaults standardUserDefaults] boolForKey:PausedKey];
+}
+
+// Pause gates only the automatic (wake/unlock/display-change) reconnects; the
+// app stays running and manual reconnect still works.
+- (void)togglePause:(id)sender {
+  (void)sender;
+  BOOL paused = ![self isPaused];
+  [[NSUserDefaults standardUserDefaults] setBool:paused forKey:PausedKey];
+  [self log:paused ? @"paused (auto-reconnect off)" : @"resumed (auto-reconnect on)"];
+  if (paused) [self stopRetryTimers];  // cancel any pending auto-reconnect
+  [self syncPauseControls];
+  [self refreshAsyncAllowAutoSelect:NO];
+}
+
+- (void)syncPauseControls {
+  NSControlStateValue state = [self isPaused] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.pauseSwitch.state = state;
+  self.pauseMenuItem.state = state;
 }
 
 - (void)workspaceDidWake:(NSNotification *)notification {

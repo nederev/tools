@@ -52,6 +52,7 @@ The control panel popover includes:
 
 - current Sidecar target and connection status
 - compact reconnect button
+- a `Pause` switch (suspends automatic reconnects; see below)
 - target iPad selector from discovered Sidecar devices
 - refresh targets button
 - configurable global reconnect hotkey
@@ -59,8 +60,17 @@ The control panel popover includes:
 - open log and quit buttons
 
 The right-click menu includes the same core actions: status, reconnect now,
-target selection, launch-at-login toggle, show control panel, open log, and
-quit.
+pause, target selection, launch-at-login toggle, show control panel, open log,
+and quit.
+
+### Pause
+
+Flip **Pause** (the header switch, or the `Pause` item in the right-click menu)
+when you want to use the iPad on its own — read on it, AirPlay a movie, etc. —
+without the app pulling it back as a Sidecar display. While paused the app keeps
+running but ignores wake/unlock/display-change events; the status reads `Paused`
+and the menu-bar icon dims. Manual reconnect (the button, menu, or hotkey) still
+works. Un-pause to resume automatic reconnection.
 
 On first launch, if exactly one display-capable Sidecar device is
 discoverable, the app selects it automatically. If multiple devices are
@@ -295,6 +305,7 @@ The app:
 - no-ops when connected
 - reconnects after wake/unlock or display changes when disconnected
 - retries after 8, 15, and 30 seconds because iPads can be slow to wake
+- skips all automatic reconnects while `Pause` is on (manual still works)
 - logs to `~/Library/Logs/SidecarReconnector.log`
 - can install or remove its own launch-at-login entry from the control
   panel checkbox or menu item
