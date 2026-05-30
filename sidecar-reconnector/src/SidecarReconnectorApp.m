@@ -587,7 +587,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     [content addSubview:self.panelStatusLabel];
 
     NSButton *reconnect = [self buttonWithTitle:@"↻"
-                                          frame:NSMakeRect(iconButtonX, 174, iconButtonSize, iconButtonSize)
+                                          frame:NSMakeRect(iconButtonX, 173, iconButtonSize, 28)
                                          action:@selector(reconnectNow:)
                                       fillColor:[NSColor colorWithRed:0.08 green:0.38 blue:0.72 alpha:1.0]
                                       textColor:[NSColor whiteColor]];
@@ -596,14 +596,14 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     [content addSubview:reconnect];
 
     // Master Pause toggle: suspends automatic reconnects (manual still works).
-    NSTextField *pauseLabel = [self labelWithFrame:NSMakeRect(338, 169, 52, 16)
+    NSTextField *pauseLabel = [self labelWithFrame:NSMakeRect(338, 179, 52, 16)
                                               text:@"Pause"
                                               font:[NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
                                              color:[NSColor colorWithWhite:0.74 alpha:1.0]];
     pauseLabel.alignment = NSTextAlignmentRight;
     [content addSubview:pauseLabel];
 
-    self.pauseSwitch = [[NSSwitch alloc] initWithFrame:NSMakeRect(396, 167, 38, 22)];
+    self.pauseSwitch = [[NSSwitch alloc] initWithFrame:NSMakeRect(396, 176, 38, 22)];
     self.pauseSwitch.target = self;
     self.pauseSwitch.action = @selector(togglePause:);
     self.pauseSwitch.toolTip = @"Pause auto-reconnect (app keeps running)";
@@ -663,7 +663,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     self.recordHotKeyButton.toolTip = @"Change Hotkey";
     [content addSubview:self.recordHotKeyButton];
 
-    [content addSubview:[self separatorWithFrame:NSMakeRect(0, 36, 500, 1)]];
+    [content addSubview:[self separatorWithFrame:NSMakeRect(left, 36, 456, 1)]];
 
     self.launchAtLoginCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(left, 7, 200, 24)];
     self.launchAtLoginCheckbox.buttonType = NSButtonTypeSwitch;
