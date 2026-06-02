@@ -66,6 +66,11 @@ Menu-bar app / Dock behavior:
   on the main thread from that one list (status is derived with the pure
   `resolveTarget:devices:` — no second discovery). Do not call the controller's
   list/status/connect methods on the main thread.
+- Status-item glyph gotcha: do NOT set `contentTintColor` on the
+  `NSStatusBarButton` when it carries a template image — on the tested macOS it
+  makes the glyph render blank (invisible) while still reserving its slot. Use
+  `alphaValue` for dimming (safe) and show status colour in the popover/menu
+  instead. The icon vanishing "for no reason" is usually this.
 - Notch gotcha (verified on a notched MacBook Air): a freshly added
   `NSStatusItem` on a full menu bar gets parked under the notch and is
   invisible even though `visible == YES` and it has a valid window frame.

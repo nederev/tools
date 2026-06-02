@@ -215,12 +215,10 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 - (void)updateStatusItemForStatus:(NSString *)status {
   NSStatusBarButton *button = self.statusItem.button;
   button.toolTip = status.length ? status : [self appTitle];
-  SRPanelStatusKind kind = [self statusKindForText:status];
-  // Paused: dim the glyph so the menu bar shows the app is dormant (and no red).
-  button.alphaValue = (kind == SRPanelStatusPaused) ? 0.45 : 1.0;
-  button.contentTintColor = (kind == SRPanelStatusDisconnected || kind == SRPanelStatusAttention)
-                                ? [NSColor systemRedColor]
-                                : nil;
+  // Dim only when paused. Do NOT set contentTintColor: tinting a template image
+  // on an NSStatusBarButton makes the glyph render blank on the menu bar (an
+  // AppKit quirk), so status colour lives in the popover pill / menu / tooltip.
+  button.alphaValue = ([self statusKindForText:status] == SRPanelStatusPaused) ? 0.45 : 1.0;
 }
 
 - (void)registerNotifications {
