@@ -8,7 +8,7 @@ static NSString *const TargetNameKey = @"targetName";
 static NSString *const TargetIdentifierKey = @"targetIdentifier";
 static NSString *const HotKeyCodeKey = @"hotKeyCode";
 static NSString *const HotKeyModifiersKey = @"hotKeyModifiers";
-static NSString *const PausedKey = @"paused";
+static NSString *const ConnectEnabledKey = @"connectEnabled";
 static NSString *const LogPath = @"~/Library/Logs/SidecarReconnector.log";
 static const UInt32 HotKeySignature = 0x53524331;
 static const UInt32 ReconnectHotKeyID = 1;
@@ -29,7 +29,7 @@ typedef NS_ENUM(NSInteger, SRPanelStatusKind) {
   SRPanelStatusChecking,
   SRPanelStatusConnected,
   SRPanelStatusDisconnected,
-  SRPanelStatusPaused,     // auto-reconnect suspended by the user
+  SRPanelStatusOff,        // Connect switched off: disconnected, no auto-reconnect
   SRPanelStatusAttention,  // not configured / not found / ambiguous / error
 };
 
@@ -42,7 +42,7 @@ static AppDelegate *GlobalAppDelegate = nil;
 @property(nonatomic, strong) NSMenuItem *statusMenuItem;
 @property(nonatomic, strong) NSMenuItem *targetMenuItem;
 @property(nonatomic, strong) NSMenuItem *launchAtLoginItem;
-@property(nonatomic, strong) NSMenuItem *pauseMenuItem;
+@property(nonatomic, strong) NSMenuItem *connectMenuItem;
 @property(nonatomic, strong) NSPopover *popover;
 @property(nonatomic, strong) NSDate *popoverClosedAt;
 @property(nonatomic, strong) NSView *panelStatusPill;
@@ -52,7 +52,7 @@ static AppDelegate *GlobalAppDelegate = nil;
 @property(nonatomic, strong) NSPopUpButton *targetPopup;
 @property(nonatomic, strong) NSButton *recordHotKeyButton;
 @property(nonatomic, strong) NSButton *launchAtLoginCheckbox;
-@property(nonatomic, strong) NSSwitch *pauseSwitch;
+@property(nonatomic, strong) NSSwitch *connectSwitch;
 @property(nonatomic, strong) SidecarController *controller;
 @property(nonatomic, strong) NSMutableArray<NSTimer *> *retryTimers;
 @property(nonatomic, strong) id localKeyMonitor;
@@ -102,6 +102,11 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [self log:[NSString stringWithFormat:@"%@ app loaded", [self appTitle]]];
   // Live in the menu bar: don't pop the panel on launch — it opens on click.
   [self refreshAsyncAllowAutoSelect:YES];
+  // Honor "Connect off" across relaunches: if we're meant to be off but the iPad
+  // is currently attached (e.g. macOS reconnected it), disconnect it.
+  if (![self isConnectEnabled]) {
+    [self runDisconnect];
+  }
 }
 
 - (void)setupStatusItem {
@@ -160,9 +165,9 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 
   [menu addItem:[[NSMenuItem alloc] initWithTitle:@"Reconnect Now" action:@selector(reconnectNow:) keyEquivalent:@"r"]];
 
-  // Checkmark when paused; one click here pauses without opening the panel.
-  self.pauseMenuItem = [[NSMenuItem alloc] initWithTitle:@"Pause" action:@selector(togglePause:) keyEquivalent:@""];
-  [menu addItem:self.pauseMenuItem];
+  // Checkmark when Connect is on; one click toggles connect/disconnect.
+  self.connectMenuItem = [[NSMenuItem alloc] initWithTitle:@"Connect" action:@selector(toggleConnect:) keyEquivalent:@""];
+  [menu addItem:self.connectMenuItem];
 
   self.targetMenuItem = [[NSMenuItem alloc] initWithTitle:@"Target" action:nil keyEquivalent:@""];
   self.targetMenuItem.submenu = [[NSMenu alloc] initWithTitle:@"Target"];
@@ -205,7 +210,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 - (SRPanelStatusKind)statusKindForText:(NSString *)status {
   // Check "Disconnected" before "Connected": the word "disconnected" contains
   // the substring "connected".
-  if ([status localizedCaseInsensitiveContainsString:@"Paused"]) return SRPanelStatusPaused;
+  if ([status localizedCaseInsensitiveContainsString:@"Off"]) return SRPanelStatusOff;
   if ([status localizedCaseInsensitiveContainsString:@"Checking"]) return SRPanelStatusChecking;
   if ([status localizedCaseInsensitiveContainsString:@"Disconnected"]) return SRPanelStatusDisconnected;
   if ([status localizedCaseInsensitiveContainsString:@"Connected"]) return SRPanelStatusConnected;
@@ -215,10 +220,10 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 - (void)updateStatusItemForStatus:(NSString *)status {
   NSStatusBarButton *button = self.statusItem.button;
   button.toolTip = status.length ? status : [self appTitle];
-  // Dim only when paused. Do NOT set contentTintColor: tinting a template image
-  // on an NSStatusBarButton makes the glyph render blank on the menu bar (an
-  // AppKit quirk), so status colour lives in the popover pill / menu / tooltip.
-  button.alphaValue = ([self statusKindForText:status] == SRPanelStatusPaused) ? 0.45 : 1.0;
+  // Dim only when Connect is off. Do NOT set contentTintColor: tinting a template
+  // image on an NSStatusBarButton makes the glyph render blank on the menu bar
+  // (an AppKit quirk), so status colour lives in the popover pill / menu / tooltip.
+  button.alphaValue = ([self statusKindForText:status] == SRPanelStatusOff) ? 0.45 : 1.0;
 }
 
 - (void)registerNotifications {
@@ -233,7 +238,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   (void)menu;
   [self refreshAsyncAllowAutoSelect:NO];
   [self syncLaunchAtLoginControls];
-  [self syncPauseControls];
+  [self syncConnectControls];
 }
 
 - (NSString *)expandedLogPath {
@@ -512,9 +517,9 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
       label = @"Checking";
       background = [NSColor colorWithRed:0.36 green:0.54 blue:0.88 alpha:1.0];
       break;
-    case SRPanelStatusPaused:
-      label = @"Paused";
-      background = [NSColor colorWithRed:0.85 green:0.62 blue:0.20 alpha:1.0];
+    case SRPanelStatusOff:
+      label = @"Off";
+      background = [NSColor colorWithWhite:0.45 alpha:1.0];
       break;
     case SRPanelStatusAttention:
       label = @"Needs attention";
@@ -593,19 +598,19 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     reconnect.toolTip = @"Reconnect Now";
     [content addSubview:reconnect];
 
-    // Master Pause toggle: suspends automatic reconnects (manual still works).
-    NSTextField *pauseLabel = [self labelWithFrame:NSMakeRect(338, 179, 52, 16)
-                                              text:@"Pause"
-                                              font:[NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
-                                             color:[NSColor colorWithWhite:0.74 alpha:1.0]];
-    pauseLabel.alignment = NSTextAlignmentRight;
-    [content addSubview:pauseLabel];
+    // Master Connect toggle: ON connects + auto-reconnects, OFF disconnects now.
+    NSTextField *connectLabel = [self labelWithFrame:NSMakeRect(316, 179, 74, 16)
+                                                text:@"Connect"
+                                                font:[NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium]
+                                               color:[NSColor colorWithWhite:0.74 alpha:1.0]];
+    connectLabel.alignment = NSTextAlignmentRight;
+    [content addSubview:connectLabel];
 
-    self.pauseSwitch = [[NSSwitch alloc] initWithFrame:NSMakeRect(396, 176, 38, 22)];
-    self.pauseSwitch.target = self;
-    self.pauseSwitch.action = @selector(togglePause:);
-    self.pauseSwitch.toolTip = @"Pause auto-reconnect (app keeps running)";
-    [content addSubview:self.pauseSwitch];
+    self.connectSwitch = [[NSSwitch alloc] initWithFrame:NSMakeRect(396, 176, 38, 22)];
+    self.connectSwitch.target = self;
+    self.connectSwitch.action = @selector(toggleConnect:);
+    self.connectSwitch.toolTip = @"On: connect & auto-reconnect.  Off: disconnect & leave the iPad alone.";
+    [content addSubview:self.connectSwitch];
 
     [content addSubview:[self separatorWithFrame:NSMakeRect(left, 148, 456, 1)]];
 
@@ -710,7 +715,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [self ensurePopover];
   [self updateSelectedTargetLabel];
   [self syncLaunchAtLoginControls];
-  [self syncPauseControls];
+  [self syncConnectControls];
   [self refreshAsyncAllowAutoSelect:NO];
 
   NSStatusBarButton *button = self.statusItem.button;
@@ -886,7 +891,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 }
 
 - (void)applyStatusFromDevices:(NSArray<SRCDevice *> *)devices error:(NSError *)error {
-  NSString *status = [self isPaused] ? @"Status: Paused" : [self statusTextForDevices:devices error:error];
+  NSString *status = ![self isConnectEnabled] ? @"Status: Off" : [self statusTextForDevices:devices error:error];
   self.statusMenuItem.title = status;
   [self updatePanelStatusAppearance:status];
   [self updateStatusItemForStatus:status];
@@ -963,8 +968,8 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 }
 
 - (void)scheduleRetriesForReason:(NSString *)reason {
-  if ([self isPaused]) {
-    [self log:[NSString stringWithFormat:@"auto-reconnect skipped (paused) reason=%@", reason ? reason : @""]];
+  if (![self isConnectEnabled]) {
+    [self log:[NSString stringWithFormat:@"auto-reconnect skipped (connect off) reason=%@", reason ? reason : @""]];
     return;
   }
   [self stopRetryTimers];
@@ -985,26 +990,58 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [self.retryTimers removeAllObjects];
 }
 
-- (BOOL)isPaused {
-  return [[NSUserDefaults standardUserDefaults] boolForKey:PausedKey];
+- (BOOL)isConnectEnabled {
+  id value = [[NSUserDefaults standardUserDefaults] objectForKey:ConnectEnabledKey];
+  return value ? [value boolValue] : YES;  // default: connect mode on
 }
 
-// Pause gates only the automatic (wake/unlock/display-change) reconnects; the
-// app stays running and manual reconnect still works.
-- (void)togglePause:(id)sender {
+// The Connect switch is the master intent: ON connects now and auto-reconnects
+// on wake/unlock/display changes; OFF disconnects now and leaves the iPad alone
+// (standalone) until turned back on.
+- (void)toggleConnect:(id)sender {
   (void)sender;
-  BOOL paused = ![self isPaused];
-  [[NSUserDefaults standardUserDefaults] setBool:paused forKey:PausedKey];
-  [self log:paused ? @"paused (auto-reconnect off)" : @"resumed (auto-reconnect on)"];
-  if (paused) [self stopRetryTimers];  // cancel any pending auto-reconnect
-  [self syncPauseControls];
-  [self refreshAsyncAllowAutoSelect:NO];
+  BOOL enabled = ![self isConnectEnabled];
+  [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:ConnectEnabledKey];
+  [self log:enabled ? @"connect on" : @"connect off (disconnecting)"];
+  [self syncConnectControls];
+
+  // Reflect the new state immediately, before the connect/disconnect finishes.
+  NSString *immediate = enabled ? @"Status: Checking..." : @"Status: Off";
+  self.statusMenuItem.title = immediate;
+  [self updatePanelStatusAppearance:immediate];
+  [self updateStatusItemForStatus:immediate];
+
+  if (enabled) {
+    [self runReconnectWithReason:@"connect toggle" notify:SRNotifyFailureOnly];
+  } else {
+    [self stopRetryTimers];  // cancel any pending auto-reconnect
+    [self runDisconnect];
+  }
 }
 
-- (void)syncPauseControls {
-  NSControlStateValue state = [self isPaused] ? NSControlStateValueOn : NSControlStateValueOff;
-  self.pauseSwitch.state = state;
-  self.pauseMenuItem.state = state;
+- (void)runDisconnect {
+  if (![self hasSelectedTarget]) {
+    [self refreshAsyncAllowAutoSelect:NO];
+    return;
+  }
+  [self log:@"disconnect start"];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    NSError *error = nil;
+    SRCDevice *device = nil;
+    BOOL ok = [self.controller disconnectTarget:[self selectedTarget] device:&device error:&error];
+    [self log:[NSString stringWithFormat:@"disconnect result ok=%@ error=%@",
+               ok ? @"true" : @"false",
+               error.localizedDescription ? error.localizedDescription : @""]];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self refreshAsyncAllowAutoSelect:NO];
+    });
+  });
+}
+
+- (void)syncConnectControls {
+  NSControlStateValue state = [self isConnectEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
+  self.connectSwitch.state = state;
+  self.connectMenuItem.state = state;
 }
 
 - (void)workspaceDidWake:(NSNotification *)notification {

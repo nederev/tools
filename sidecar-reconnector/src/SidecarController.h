@@ -15,6 +15,9 @@ typedef NS_ENUM(NSInteger, SRCErrorCode) {
   SRCErrorAmbiguousTarget = 21,
   SRCErrorConnectFailed = 30,
   SRCErrorConnectTimeout = 31,
+  SRCErrorDisconnectUnavailable = 13,
+  SRCErrorDisconnectFailed = 32,
+  SRCErrorDisconnectTimeout = 33,
 };
 
 @interface SRCDevice : NSObject
@@ -48,6 +51,9 @@ typedef NS_ENUM(NSInteger, SRCErrorCode) {
 - (BOOL)connectTarget:(SRCTarget *)target
                device:(SRCDevice *_Nullable *_Nullable)device
                 error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)disconnectTarget:(SRCTarget *)target
+                  device:(SRCDevice *_Nullable *_Nullable)device
+                   error:(NSError *_Nullable *_Nullable)error;
 + (NSString *)logLineForDevice:(SRCDevice *)device prefix:(NSString *)prefix;
 @end
 

@@ -145,6 +145,7 @@ static void appendUniqueRawDevices(NSMutableArray *target, NSArray *source) {
 - (NSArray<SRCDevice *> *)locked_listDevicesWithError:(NSError **)error;
 - (SRCStatus)locked_statusForTarget:(SRCTarget *)target device:(SRCDevice **)device error:(NSError **)error;
 - (BOOL)locked_connectTarget:(SRCTarget *)target device:(SRCDevice **)device error:(NSError **)error;
+- (BOOL)locked_disconnectTarget:(SRCTarget *)target device:(SRCDevice **)device error:(NSError **)error;
 @end
 
 @implementation SidecarController
@@ -397,6 +398,58 @@ static void appendUniqueRawDevices(NSMutableArray *target, NSArray *source) {
   }
   if (connectError) {
     if (error) *error = SRCError(SRCErrorConnectFailed, [NSString stringWithFormat:@"connect-error: %@", connectError.localizedDescription]);
+    return NO;
+  }
+  return YES;
+}
+
+- (BOOL)disconnectTarget:(SRCTarget *)target device:(SRCDevice **)device error:(NSError **)error {
+  @synchronized(self) {
+    return [self locked_disconnectTarget:target device:device error:error];
+  }
+}
+
+- (BOOL)locked_disconnectTarget:(SRCTarget *)target device:(SRCDevice **)device error:(NSError **)error {
+  SRCDevice *resolved = nil;
+  SRCStatus status = [self locked_statusForTarget:target device:&resolved error:error];
+  if (error && *error) return NO;
+  if (device) *device = resolved;
+  if (status == SRCStatusDisconnected) return YES;  // already disconnected
+
+  id manager = [self managerWithError:error];
+  if (!manager) return NO;
+
+  id rawTarget = nil;
+  for (id rawDevice in self.lastRawDevices ? self.lastRawDevices : @[]) {
+    if ([rawDeviceKey(rawDevice) isEqualToString:deviceKey(resolved)]) {
+      rawTarget = rawDevice;
+      break;
+    }
+  }
+  if (!rawTarget) {
+    if (error) *error = SRCError(SRCErrorTargetNotFound, @"target raw device unavailable");
+    return NO;
+  }
+
+  if (![manager respondsToSelector:@selector(disconnectFromDevice:completion:)]) {
+    if (error) *error = SRCError(SRCErrorDisconnectUnavailable, @"disconnectFromDevice:completion: unavailable");
+    return NO;
+  }
+
+  dispatch_semaphore_t finished = dispatch_semaphore_create(0);
+  __block NSError *disconnectError = nil;
+  void (^completion)(NSError *) = ^(NSError *callbackError) {
+    disconnectError = callbackError;
+    dispatch_semaphore_signal(finished);
+  };
+  ((void (*)(id, SEL, id, id))objc_msgSend)(manager, @selector(disconnectFromDevice:completion:), rawTarget, completion);
+
+  if (dispatch_semaphore_wait(finished, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC))) != 0) {
+    if (error) *error = SRCError(SRCErrorDisconnectTimeout, @"disconnect-timeout");
+    return NO;
+  }
+  if (disconnectError) {
+    if (error) *error = SRCError(SRCErrorDisconnectFailed, [NSString stringWithFormat:@"disconnect-error: %@", disconnectError.localizedDescription]);
     return NO;
   }
   return YES;

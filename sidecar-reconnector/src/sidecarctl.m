@@ -8,6 +8,7 @@ typedef NS_ENUM(NSInteger, SidecarCtlCommand) {
   SidecarCtlCommandList,
   SidecarCtlCommandStatus,
   SidecarCtlCommandConnect,
+  SidecarCtlCommandDisconnect,
 };
 
 static NSString *TargetName = nil;
@@ -19,6 +20,7 @@ static void printUsage(void) {
           "  sidecarctl list\n"
           "  sidecarctl status --name <ipad-name> [--id <identifier>]\n"
           "  sidecarctl connect --name <ipad-name> [--id <identifier>]\n"
+          "  sidecarctl disconnect --name <ipad-name> [--id <identifier>]\n"
           "\n"
           "Options:\n"
           "  --name <name>    Match a Sidecar device by display name.\n"
@@ -39,6 +41,8 @@ static SidecarCtlCommand parseArgs(int argc, const char **argv) {
     command = SidecarCtlCommandStatus;
   } else if (strcmp(argv[1], "connect") == 0) {
     command = SidecarCtlCommandConnect;
+  } else if (strcmp(argv[1], "disconnect") == 0) {
+    command = SidecarCtlCommandDisconnect;
   } else if (strcmp(argv[1], "help") == 0 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
     return SidecarCtlCommandHelp;
   } else {
@@ -98,6 +102,22 @@ int main(int argc, const char **argv) {
       fprintf(stderr, "target-not-found candidateCount=%lu\n", (unsigned long)devices.count);
       for (SRCDevice *device in devices) printDevice(@"candidate", device);
       return SRCErrorTargetNotFound;
+    }
+
+    if (command == SidecarCtlCommandDisconnect) {
+      if (!result.target.connected) {
+        printDevice(@"already-disconnected", result.target);
+        return 0;
+      }
+      printDevice(@"target-found", result.target);
+      SRCDevice *disconnectedDevice = nil;
+      BOOL ok = [controller disconnectTarget:target device:&disconnectedDevice error:&error];
+      if (!ok) {
+        fprintf(stderr, "%s\n", error.localizedDescription.UTF8String);
+        return error ? (int)error.code : 2;
+      }
+      fprintf(stdout, "disconnect-request-ok\n");
+      return 0;
     }
 
     if (result.target.connected) {
