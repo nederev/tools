@@ -13,6 +13,12 @@ static NSString *const LogPath = @"~/Library/Logs/SidecarReconnector.log";
 static const UInt32 HotKeySignature = 0x53524331;
 static const UInt32 ReconnectHotKeyID = 1;
 
+// Auto-reconnect uses one attempt at a time with exponential backoff. Each
+// failed connect pops a macOS "Unable to Connect" dialog, so we must never
+// stack attempts — that is what floods the screen.
+static const NSTimeInterval kReconnectBaseDelay = 8.0;
+static const NSTimeInterval kReconnectMaxDelay = 120.0;
+
 // A click on the icon while the popover is open arrives just after the
 // transient auto-dismiss; treat a click this soon after a close as "the click
 // that closed it" and don't re-open. Reliable now that device discovery no
@@ -54,7 +60,9 @@ static AppDelegate *GlobalAppDelegate = nil;
 @property(nonatomic, strong) NSButton *launchAtLoginCheckbox;
 @property(nonatomic, strong) NSSwitch *connectSwitch;
 @property(nonatomic, strong) SidecarController *controller;
-@property(nonatomic, strong) NSMutableArray<NSTimer *> *retryTimers;
+@property(nonatomic, strong) NSTimer *retryTimer;
+@property(nonatomic, assign) NSTimeInterval retryBackoff;
+@property(nonatomic, assign) BOOL reconnectCycleActive;
 @property(nonatomic, strong) id localKeyMonitor;
 @property(nonatomic, assign) EventHotKeyRef reconnectHotKeyRef;
 @property(nonatomic, assign) BOOL recordingHotKey;
@@ -94,7 +102,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     [NSApp setApplicationIconImage:iconImage];
   }
   self.controller = [SidecarController new];
-  self.retryTimers = [NSMutableArray array];
+  self.retryBackoff = kReconnectBaseDelay;
   [self setupStatusItem];
   [self installHotKeyHandler];
   [self registerReconnectHotKey];
@@ -923,14 +931,24 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 }
 
 - (void)runReconnectWithReason:(NSString *)reason notify:(SRNotify)notify {
+  [self runReconnectWithReason:reason notify:notify completion:nil];
+}
+
+// completion(ok): ok == YES means connected or nothing to retry; NO means the
+// connect failed and the caller may want to retry. No app alert on failure —
+// macOS shows its own "Unable to Connect" dialog, so duplicating it just stacks.
+- (void)runReconnectWithReason:(NSString *)reason notify:(SRNotify)notify completion:(void (^)(BOOL ok))completion {
+  void (^done)(BOOL) = ^(BOOL ok) { if (completion) completion(ok); };
   if (self.reconnectRunning) {
     [self log:@"reconnect skipped: already running"];
+    done(YES);
     return;
   }
   if (![self hasSelectedTarget]) {
     [self log:@"reconnect refused: target not configured"];
     if (notify != SRNotifyNone) [self showAlert:@"Sidecar target not configured" informativeText:@"Choose a target first."];
     [self refreshAsyncAllowAutoSelect:NO];
+    done(YES);  // nothing to retry
     return;
   }
 
@@ -944,8 +962,8 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
       [self log:[NSString stringWithFormat:@"already connected %@", [SidecarController logLineForDevice:device prefix:@"device"]]];
       dispatch_async(dispatch_get_main_queue(), ^{
         self.reconnectRunning = NO;
-        if (notify == SRNotifyAll) [self showAlert:@"Sidecar already connected" informativeText:device.name ? device.name : @""];
         [self refreshAsyncAllowAutoSelect:NO];
+        done(YES);
       });
       return;
     }
@@ -957,37 +975,70 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
                device ? [SidecarController logLineForDevice:device prefix:@"device"] : @""]];
     dispatch_async(dispatch_get_main_queue(), ^{
       self.reconnectRunning = NO;
-      BOOL announce = (notify == SRNotifyAll) || (notify == SRNotifyFailureOnly && !ok);
-      if (announce) {
-        [self showAlert:ok ? @"Sidecar reconnect requested" : @"Sidecar reconnect failed"
-        informativeText:ok ? (device.name ? device.name : @"") : (error.localizedDescription ? error.localizedDescription : @"Unknown error")];
-      }
       [self refreshAsyncAllowAutoSelect:NO];
+      done(ok);
     });
   });
 }
 
-- (void)scheduleRetriesForReason:(NSString *)reason {
+// One attempt at a time, exponential backoff (8 -> 16 -> 32 ... -> 120s) until
+// connected. `immediate` is for an explicit user action (Connect on); wake/
+// display events use a delayed first attempt and never restart a live cycle.
+- (void)startReconnectCycleForReason:(NSString *)reason immediate:(BOOL)immediate {
   if (![self isConnectEnabled]) {
     [self log:[NSString stringWithFormat:@"auto-reconnect skipped (connect off) reason=%@", reason ? reason : @""]];
     return;
   }
-  [self stopRetryTimers];
-  for (NSNumber *delay in @[@8, @15, @30]) {
-    NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:delay.doubleValue repeats:NO block:^(NSTimer *t) {
-      (void)t;
-      [self runReconnectWithReason:[NSString stringWithFormat:@"%@ retry +%@s", reason ? reason : @"event", delay] notify:SRNotifyNone];
-    }];
-    [self.retryTimers addObject:timer];
+  if (self.reconnectCycleActive && !immediate) return;  // already trying — don't pile on
+  self.reconnectCycleActive = YES;
+  [self.retryTimer invalidate];
+  self.retryTimer = nil;
+  self.retryBackoff = kReconnectBaseDelay;
+  if (immediate) {
+    [self attemptReconnectForReason:reason];
+  } else {
+    [self scheduleReconnectForReason:reason delay:kReconnectBaseDelay];
   }
-  [self log:[NSString stringWithFormat:@"scheduled reconnect retries reason=%@", reason ? reason : @""]];
 }
 
-- (void)stopRetryTimers {
-  for (NSTimer *timer in self.retryTimers) {
-    [timer invalidate];
+- (void)scheduleReconnectForReason:(NSString *)reason delay:(NSTimeInterval)delay {
+  [self.retryTimer invalidate];
+  __weak AppDelegate *weakSelf = self;
+  self.retryTimer = [NSTimer scheduledTimerWithTimeInterval:delay repeats:NO block:^(NSTimer *t) {
+    (void)t;
+    [weakSelf attemptReconnectForReason:reason];
+  }];
+  [self log:[NSString stringWithFormat:@"reconnect scheduled in %.0fs reason=%@", delay, reason ? reason : @""]];
+}
+
+- (void)attemptReconnectForReason:(NSString *)reason {
+  self.retryTimer = nil;
+  if (![self isConnectEnabled]) {
+    self.reconnectCycleActive = NO;
+    return;
   }
-  [self.retryTimers removeAllObjects];
+  [self runReconnectWithReason:reason notify:SRNotifyNone completion:^(BOOL ok) {
+    if (ok) {
+      self.reconnectCycleActive = NO;
+      self.retryBackoff = kReconnectBaseDelay;
+      return;
+    }
+    // Don't reschedule if Connect was turned off or the cycle was cancelled
+    // while this attempt was in flight.
+    if (![self isConnectEnabled] || !self.reconnectCycleActive) {
+      self.retryBackoff = kReconnectBaseDelay;
+      return;
+    }
+    self.retryBackoff = fmin(self.retryBackoff * 2.0, kReconnectMaxDelay);
+    [self scheduleReconnectForReason:reason delay:self.retryBackoff];
+  }];
+}
+
+- (void)stopReconnectCycle {
+  self.reconnectCycleActive = NO;
+  [self.retryTimer invalidate];
+  self.retryTimer = nil;
+  self.retryBackoff = kReconnectBaseDelay;
 }
 
 - (BOOL)isConnectEnabled {
@@ -1012,9 +1063,9 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [self updateStatusItemForStatus:immediate];
 
   if (enabled) {
-    [self runReconnectWithReason:@"connect toggle" notify:SRNotifyFailureOnly];
+    [self startReconnectCycleForReason:@"connect toggle" immediate:YES];
   } else {
-    [self stopRetryTimers];  // cancel any pending auto-reconnect
+    [self stopReconnectCycle];  // cancel any pending auto-reconnect
     [self runDisconnect];
   }
 }
@@ -1047,25 +1098,25 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 - (void)workspaceDidWake:(NSNotification *)notification {
   (void)notification;
   [self log:@"event=system wake"];
-  [self scheduleRetriesForReason:@"system wake"];
+  [self startReconnectCycleForReason:@"system wake" immediate:NO];
 }
 
 - (void)workspaceScreensDidWake:(NSNotification *)notification {
   (void)notification;
   [self log:@"event=screens wake"];
-  [self scheduleRetriesForReason:@"screens wake"];
+  [self startReconnectCycleForReason:@"screens wake" immediate:NO];
 }
 
 - (void)workspaceSessionDidBecomeActive:(NSNotification *)notification {
   (void)notification;
   [self log:@"event=session active"];
-  [self scheduleRetriesForReason:@"session active"];
+  [self startReconnectCycleForReason:@"session active" immediate:NO];
 }
 
 - (void)screenParametersChanged:(NSNotification *)notification {
   (void)notification;
   [self log:@"event=screen parameters changed"];
-  [self scheduleRetriesForReason:@"screen parameters changed"];
+  [self startReconnectCycleForReason:@"screen parameters changed" immediate:NO];
 }
 
 - (NSString *)launchAgentPath {

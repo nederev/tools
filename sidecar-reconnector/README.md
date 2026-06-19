@@ -309,7 +309,9 @@ The app:
 - checks whether Sidecar is already connected
 - no-ops when connected
 - reconnects after wake/unlock or display changes when disconnected
-- retries after 8, 15, and 30 seconds because iPads can be slow to wake
+- retries one attempt at a time with exponential backoff (8s, then doubling up
+  to 120s) so a persistently unavailable iPad cannot flood the screen with
+  macOS "Unable to Connect" dialogs; never shows its own duplicate alert
 - when `Connect` is off: disconnects the iPad and skips all automatic reconnects
   (manual reconnect still works)
 - logs to `~/Library/Logs/SidecarReconnector.log`
