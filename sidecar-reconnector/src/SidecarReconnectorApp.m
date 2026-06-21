@@ -18,6 +18,12 @@ static const UInt32 ReconnectHotKeyID = 1;
 // stack attempts — that is what floods the screen.
 static const NSTimeInterval kReconnectBaseDelay = 8.0;
 static const NSTimeInterval kReconnectMaxDelay = 120.0;
+// Each failed connect leaves a macOS "Unable to Connect" dialog on screen that
+// never auto-dismisses, so we cannot retry forever — a persistently unavailable
+// iPad (off, busy, in standalone use) would pile up one dialog per attempt. Give
+// up after this many consecutive failures and wait for the next wake/unlock/
+// display event to start a fresh cycle. Bounds dialogs to a handful per event.
+static const NSInteger kReconnectMaxAttempts = 4;
 
 // A click on the icon while the popover is open arrives just after the
 // transient auto-dismiss; treat a click this soon after a close as "the click
@@ -63,6 +69,7 @@ static AppDelegate *GlobalAppDelegate = nil;
 @property(nonatomic, strong) NSTimer *retryTimer;
 @property(nonatomic, assign) NSTimeInterval retryBackoff;
 @property(nonatomic, assign) BOOL reconnectCycleActive;
+@property(nonatomic, assign) NSInteger reconnectAttemptCount;
 @property(nonatomic, strong) id localKeyMonitor;
 @property(nonatomic, assign) EventHotKeyRef reconnectHotKeyRef;
 @property(nonatomic, assign) BOOL recordingHotKey;
@@ -994,6 +1001,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [self.retryTimer invalidate];
   self.retryTimer = nil;
   self.retryBackoff = kReconnectBaseDelay;
+  self.reconnectAttemptCount = 0;
   if (immediate) {
     [self attemptReconnectForReason:reason];
   } else {
@@ -1017,16 +1025,24 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
     self.reconnectCycleActive = NO;
     return;
   }
+  self.reconnectAttemptCount += 1;
   [self runReconnectWithReason:reason notify:SRNotifyNone completion:^(BOOL ok) {
     if (ok) {
-      self.reconnectCycleActive = NO;
-      self.retryBackoff = kReconnectBaseDelay;
+      [self stopReconnectCycle];
       return;
     }
     // Don't reschedule if Connect was turned off or the cycle was cancelled
     // while this attempt was in flight.
     if (![self isConnectEnabled] || !self.reconnectCycleActive) {
       self.retryBackoff = kReconnectBaseDelay;
+      return;
+    }
+    // Each failure left a macOS dialog. Stop after a few so they can't pile up;
+    // the next wake/unlock/display event starts a fresh cycle.
+    if (self.reconnectAttemptCount >= kReconnectMaxAttempts) {
+      [self log:[NSString stringWithFormat:@"auto-reconnect gave up after %ld attempts; waiting for next wake/unlock/display event",
+                 (long)self.reconnectAttemptCount]];
+      [self stopReconnectCycle];
       return;
     }
     self.retryBackoff = fmin(self.retryBackoff * 2.0, kReconnectMaxDelay);
@@ -1039,6 +1055,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [self.retryTimer invalidate];
   self.retryTimer = nil;
   self.retryBackoff = kReconnectBaseDelay;
+  self.reconnectAttemptCount = 0;
 }
 
 - (BOOL)isConnectEnabled {
