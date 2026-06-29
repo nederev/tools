@@ -309,11 +309,17 @@ The app:
 - checks whether Sidecar is already connected
 - no-ops when connected
 - reconnects after wake/unlock or display changes when disconnected
-- retries one attempt at a time with exponential backoff (8s, then doubling),
-  and gives up after a few consecutive failures so a persistently unavailable
-  iPad (off, busy, or in standalone use) cannot flood the screen with macOS
-  "Unable to Connect" dialogs; a fresh cycle starts on the next wake/unlock/
-  display event, and it never shows its own duplicate alert
+- retries one attempt at a time with exponential backoff (8s, then doubling);
+  after a few consecutive failures it gives up and **suspends** auto-reconnect,
+  because each failed connect leaves a macOS "Unable to Connect (-501)" dialog
+  that never auto-dismisses. Only a genuine wake / unlock / manual reconnect /
+  Connect toggle re-arms it — the noisy `screen parameters changed` event (which
+  fires constantly, and is itself emitted by our own successful connect) will
+  not restart a suspended cycle
+- ignores `screen parameters changed` for a short window after a successful
+  connect, so attaching the Sidecar display does not immediately trigger another
+  attempt into the still-settling link (which returns -501)
+- never shows its own duplicate alert
 - when `Connect` is off: disconnects the iPad and skips all automatic reconnects
   (manual reconnect still works)
 - logs to `~/Library/Logs/SidecarReconnector.log`

@@ -21,9 +21,17 @@ static const NSTimeInterval kReconnectMaxDelay = 120.0;
 // Each failed connect leaves a macOS "Unable to Connect" dialog on screen that
 // never auto-dismisses, so we cannot retry forever — a persistently unavailable
 // iPad (off, busy, in standalone use) would pile up one dialog per attempt. Give
-// up after this many consecutive failures and wait for the next wake/unlock/
-// display event to start a fresh cycle. Bounds dialogs to a handful per event.
-static const NSInteger kReconnectMaxAttempts = 4;
+// up after this many consecutive failures, then suspend auto-reconnect until a
+// genuine "user is back" signal (wake / unlock / manual / Connect toggle). The
+// noisy `screen parameters changed` event alone will NOT restart it — that event
+// fires constantly (and is emitted by our own successful connect), so letting it
+// re-arm is exactly what floods the screen.
+static const NSInteger kReconnectMaxAttempts = 3;
+// A successful connect attaches the Sidecar display, which itself fires
+// `screen parameters changed`. Ignore that event for this long afterward so our
+// own connect doesn't immediately schedule another attempt into the brief window
+// where the link is still settling (which returns -501 and pops a dialog).
+static const NSTimeInterval kPostConnectQuietWindow = 45.0;
 
 // A click on the icon while the popover is open arrives just after the
 // transient auto-dismiss; treat a click this soon after a close as "the click
@@ -70,6 +78,8 @@ static AppDelegate *GlobalAppDelegate = nil;
 @property(nonatomic, assign) NSTimeInterval retryBackoff;
 @property(nonatomic, assign) BOOL reconnectCycleActive;
 @property(nonatomic, assign) NSInteger reconnectAttemptCount;
+@property(nonatomic, assign) BOOL autoReconnectSuspended;  // circuit breaker after repeated -501
+@property(nonatomic, strong) NSDate *lastConnectSuccess;   // for the post-connect quiet window
 @property(nonatomic, strong) id localKeyMonitor;
 @property(nonatomic, assign) EventHotKeyRef reconnectHotKeyRef;
 @property(nonatomic, assign) BOOL recordingHotKey;
@@ -927,12 +937,14 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
 
 - (void)reconnectNow:(id)sender {
   (void)sender;
+  self.autoReconnectSuspended = NO;  // explicit user action re-arms auto-reconnect
   [self runReconnectWithReason:@"manual menu" notify:SRNotifyAll];
 }
 
 - (void)reconnectFromHotKey {
   dispatch_async(dispatch_get_main_queue(), ^{
     [self log:[NSString stringWithFormat:@"hotkey pressed %@", [self hotKeyDisplayString]]];
+    self.autoReconnectSuspended = NO;  // explicit user action re-arms auto-reconnect
     [self runReconnectWithReason:@"global hotkey" notify:SRNotifyFailureOnly];
   });
 }
@@ -969,6 +981,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
       [self log:[NSString stringWithFormat:@"already connected %@", [SidecarController logLineForDevice:device prefix:@"device"]]];
       dispatch_async(dispatch_get_main_queue(), ^{
         self.reconnectRunning = NO;
+        self.lastConnectSuccess = [NSDate date];
         [self refreshAsyncAllowAutoSelect:NO];
         done(YES);
       });
@@ -982,6 +995,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
                device ? [SidecarController logLineForDevice:device prefix:@"device"] : @""]];
     dispatch_async(dispatch_get_main_queue(), ^{
       self.reconnectRunning = NO;
+      if (ok) self.lastConnectSuccess = [NSDate date];
       [self refreshAsyncAllowAutoSelect:NO];
       done(ok);
     });
@@ -1028,6 +1042,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   self.reconnectAttemptCount += 1;
   [self runReconnectWithReason:reason notify:SRNotifyNone completion:^(BOOL ok) {
     if (ok) {
+      self.autoReconnectSuspended = NO;
       [self stopReconnectCycle];
       return;
     }
@@ -1037,11 +1052,14 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
       self.retryBackoff = kReconnectBaseDelay;
       return;
     }
-    // Each failure left a macOS dialog. Stop after a few so they can't pile up;
-    // the next wake/unlock/display event starts a fresh cycle.
+    // Each failure left a macOS dialog. After a few, give up AND suspend auto-
+    // reconnect: a refusing iPad (busy / standalone use) won't recover by
+    // hammering it, and the display-change noise it emits must not restart us.
+    // Only a genuine wake / unlock / manual reconnect re-arms (see those paths).
     if (self.reconnectAttemptCount >= kReconnectMaxAttempts) {
-      [self log:[NSString stringWithFormat:@"auto-reconnect gave up after %ld attempts; waiting for next wake/unlock/display event",
+      [self log:[NSString stringWithFormat:@"auto-reconnect gave up after %ld attempts; suspending until wake/unlock or manual reconnect",
                  (long)self.reconnectAttemptCount]];
+      self.autoReconnectSuspended = YES;
       [self stopReconnectCycle];
       return;
     }
@@ -1080,6 +1098,7 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   [self updateStatusItemForStatus:immediate];
 
   if (enabled) {
+    self.autoReconnectSuspended = NO;  // flipping Connect on re-arms auto-reconnect
     [self startReconnectCycleForReason:@"connect toggle" immediate:YES];
   } else {
     [self stopReconnectCycle];  // cancel any pending auto-reconnect
@@ -1112,27 +1131,44 @@ static OSStatus ReconnectHotKeyHandler(EventHandlerCallRef nextHandler, EventRef
   self.connectMenuItem.state = state;
 }
 
+// Genuine "user is back" signals. These clear the circuit breaker and re-arm
+// auto-reconnect even if a prior cycle gave up on a refusing iPad.
 - (void)workspaceDidWake:(NSNotification *)notification {
   (void)notification;
   [self log:@"event=system wake"];
+  self.autoReconnectSuspended = NO;
   [self startReconnectCycleForReason:@"system wake" immediate:NO];
 }
 
 - (void)workspaceScreensDidWake:(NSNotification *)notification {
   (void)notification;
   [self log:@"event=screens wake"];
+  self.autoReconnectSuspended = NO;
   [self startReconnectCycleForReason:@"screens wake" immediate:NO];
 }
 
 - (void)workspaceSessionDidBecomeActive:(NSNotification *)notification {
   (void)notification;
   [self log:@"event=session active"];
+  self.autoReconnectSuspended = NO;
   [self startReconnectCycleForReason:@"session active" immediate:NO];
 }
 
+// Noisy, low-signal, and emitted by our own successful connect. Do NOT let it
+// re-arm a suspended cycle, and ignore it briefly after we connect (its own
+// echo) — otherwise it floods the screen with -501 dialogs.
 - (void)screenParametersChanged:(NSNotification *)notification {
   (void)notification;
   [self log:@"event=screen parameters changed"];
+  if (self.autoReconnectSuspended) {
+    [self log:@"display change ignored: auto-reconnect suspended (awaiting wake/unlock or manual)"];
+    return;
+  }
+  if (self.lastConnectSuccess &&
+      [[NSDate date] timeIntervalSinceDate:self.lastConnectSuccess] < kPostConnectQuietWindow) {
+    [self log:@"display change ignored: within post-connect quiet window (our own display change)"];
+    return;
+  }
   [self startReconnectCycleForReason:@"screen parameters changed" immediate:NO];
 }
 
